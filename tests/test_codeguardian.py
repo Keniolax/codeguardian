@@ -239,3 +239,15 @@ def test_guard_accepts_approval_label():
 def test_cli_rejects_malformed_sha():
     with pytest.raises(SystemExit):
         cli_main(["guard", "--repo", "o/r", "--pr", "7", "--head-sha", "abc; curl evil"])
+
+
+# --- the agent sees the cause even when it is not in the finding's file ------------------------
+
+def test_url_finding_still_gets_the_diff_that_caused_it():
+    from codeguardian.agents import build_security_input
+    diff = ("diff --git a/server.ts b/server.ts\n--- a/server.ts\n+++ b/server.ts\n"
+            "@@ -186,3 +186,2 @@\n   app.use(helmet.noSniff())\n-  app.use(helmet.frameguard())\n")
+    zap = gate_finding("z", scanner="zap", rule="10020", sev="medium", file="http://localhost:3000", line=0)
+    text = build_security_input([zap], diff)
+    assert "-  app.use(helmet.frameguard())" in text
+    assert "<changed_files>\nserver.ts\n</changed_files>" in text
