@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codeguardian"
+version = "0.1.0"
+description = "Explains and ranks security-gate findings on a pull request"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["anthropic==2.3.0"]
+
+[project.optional-dependencies]
+test = ["pytest==9.2.0"]
+
+[project.scripts]
+codeguardian = "codeguardian.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

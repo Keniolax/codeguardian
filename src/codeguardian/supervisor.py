@@ -1,0 +1,50 @@
+"""The supervisor: plain code that decides which agents run and assembles one report.
+
+v1 routes every finding to the Security agent. It skips the model when there is nothing to
+explain, and it never lets the model's output decide what the report contains: the
+scanner findings do.
+"""
+
+import json
+import time
+from pathlib import Path
+
+from .agents import MAX_FINDINGS, SecurityAgent
+from .report import AGENT_OUTPUT_SCHEMA, build_report, validate_agent_output
+
+SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+
+def load_input(directory):
+    d = Path(directory)
+    decision = json.loads((d / "decision.json").read_text(encoding="utf-8"))
+    pr = json.loads((d / "pr.json").read_text(encoding="utf-8"))
+    patch = (d / "change.diff").read_text(encoding="utf-8", errors="replace") if (d / "change.diff").exists() else ""
+    number = pr.get("number")
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        raise ValueError("pr.json number must be a positive integer")
+    return decision, {"number": number, "head_sha": str(pr.get("head_sha", ""))[:40]}, patch
+
+
+def candidate_findings(decision):
+    blocking = [dict(f, blocking=True) for f in decision.get("blocking", [])]
+    reported = [dict(f, blocking=False) for f in decision.get("reported", [])]
+    ordered = sorted(blocking, key=lambda f: SEVERITY_ORDER.get(f["severity"], 5)) + \
+        sorted(reported, key=lambda f: SEVERITY_ORDER.get(f["severity"], 5))
+    return ordered[:MAX_FINDINGS]
+
+
+def review(directory, provider):
+    decision, pr, patch = load_input(directory)
+    findings = candidate_findings(decision)
+    started = time.monotonic()
+    if not findings:
+        return build_report(pr=pr, gate_result=decision.get("result", "unknown"), items=[], dropped=[],
+                            summary="The scanners found nothing new in this change.",
+                            model=None, served_by=None, usage={"seconds": 0})
+    raw, meta = SecurityAgent(provider).run(findings, patch, AGENT_OUTPUT_SCHEMA)
+    items, dropped = validate_agent_output(raw, findings)
+    usage = dict(meta.get("usage", {}), seconds=round(time.monotonic() - started, 1))
+    return build_report(pr=pr, gate_result=decision.get("result", "unknown"), items=items, dropped=dropped,
+                        summary=raw.get("summary", ""), model=meta.get("model"),
+                        served_by=meta.get("served_by"), usage=usage)

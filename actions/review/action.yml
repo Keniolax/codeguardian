@@ -1,0 +1,38 @@
+name: CodeGuardian review
+description: Explain and rank security-gate findings with a model. Holds the model key, never a GitHub write token.
+inputs:
+  input-dir:
+    description: Directory with decision.json, pr.json and change.diff from the gate (untrusted data)
+    required: true
+  output:
+    description: Where to write report.json
+    required: true
+  anthropic-api-key:
+    description: Claude API key
+    required: true
+  model:
+    description: Claude model ID
+    default: claude-sonnet-5-5
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      with:
+        python-version: "3.12"
+    - name: Install CodeGuardian (hash-locked dependencies)
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}/../..
+      run: |
+        python -m venv "$RUNNER_TEMP/cg-venv"
+        "$RUNNER_TEMP/cg-venv/bin/pip" install --quiet --require-hashes -r "$ACTION_ROOT/requirements.lock"
+    - name: Review
+      shell: bash
+      env:
+        PYTHONPATH: ${{ github.action_path }}/../../src
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        CODEGUARDIAN_MODEL: ${{ inputs.model }}
+        INPUT_DIR: ${{ inputs.input-dir }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        "$RUNNER_TEMP/cg-venv/bin/python" -m codeguardian review --input "$INPUT_DIR" --out "$OUTPUT"
