@@ -138,13 +138,16 @@ path rules cross that edge unless the answer is denied.
   `matchLabels` and the four `matchExpressions` operators), both selectors in one entry,
   `ipBlock` with `except`, and `ports` with protocol and named ports. Some cases it does
   not decide: a port inside an `endPort` range (plugins differ), a named port not found
-  once on the pod, an unknown operator or policy type, a bad CIDR, and a pod on the host
-  network. Each gives "not evaluated" with a note, and the path stays open.
+  once on the pod, an unknown operator or policy type, a bad CIDR, a pod on the host
+  network at either end, a policy whose rules the model does not hold, and a field of a
+  shape it does not expect. Each gives "not evaluated" with a note, and the path stays
+  open.
 - Egress rules are not evaluated. They cannot block a connection into a pod, because
   replies to allowed ingress are allowed. When an egress policy selects the source pod
   of a pod-to-pod question, the answer is "not evaluated".
-- `reach` gives the answer for one pod to another. The k8s export now lists namespaces
-  too, because a `namespaceSelector` reads namespace labels.
+- `reach` gives the answer for one pod to another. It refuses a port outside 1 to 65535.
+  The k8s export now lists namespaces too, because a `namespaceSelector` reads namespace
+  labels.
 
 How to run it on the fixtures. `--now` and `--at` set the clock, because the data is
 from 2026-11-14.
@@ -216,11 +219,11 @@ The least privilege the export needs:
 - Local only: `kubectl config current-context` reads the kubeconfig, and
   `git check-ignore` reads the repository.
 
-Measured on 2026-11-16, the tests at commit `77510fc` and the speed at `dd2dff1`:
+Measured on 2026-11-16, the tests at commit `ac74ec0` and the speed at `dd2dff1`:
 
-- 181 tests pass (25 for v1, 156 for v2, of which 34 are for NetworkPolicy). The
-  mutation run removes 128 controls one at a time and runs the tests that name each one:
-  167 mutant-test pairs, 126 distinct tests, all fail without their control. One case, a
+- 200 tests pass (25 for v1, 175 for v2, of which 53 are for NetworkPolicy). The
+  mutation run removes 158 controls one at a time and runs the tests that name each one:
+  210 mutant-test pairs, 145 distinct tests, all fail without their control. One case, a
   pod running as a different service account, has no mutant of its own; that edge is
   absent from the input itself. In the NetworkPolicy tests every parametrized case has a
   mutant of its own, and the run fails if one does not.
@@ -259,3 +262,8 @@ What was learned:
   Service's target port that name, so the policy admitted the traffic, and the "control"
   opened the path as well. The test failed. The control now gives the name to another
   port.
+- A test for each claim does not test each guard. A second reader wrote 24 mutations of
+  the NetworkPolicy code, and 22 left every test green. In 11 of them a guard that marks
+  unread input "not evaluated" gave a deny instead. Input the fixtures did not hold found
+  six faults; one was a pod on the host network that read as denied when it was the
+  source. Each guard and fault now has a test and a mutant.
