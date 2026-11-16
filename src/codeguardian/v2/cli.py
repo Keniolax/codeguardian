@@ -114,11 +114,12 @@ def run(a):
             sys.stdout.write(render.explanation(explain(store, _incident(store, a.incident), provider)))
             return 0
         from .ask import QueryError, ask
+        from .render import term
 
         try:
             sys.stdout.write(render.answer(ask(store, a.question, provider)))
         except QueryError as exc:
-            print(f"query refused: {exc}", file=sys.stderr)
+            print(f"query refused: {term(exc)}", file=sys.stderr)
             return 2
         return 0
     return 1
@@ -126,6 +127,7 @@ def run(a):
 
 def _ingest(a, store, pipe, clock):
     from .collectors import CollectorError, manifest
+    from .render import term
 
     aws = (a.aws_iam, a.aws_buckets, a.aws_tags)
     if any(aws) and not all(aws):
@@ -152,9 +154,9 @@ def _ingest(a, store, pipe, clock):
             jobs.append({"k8s": paths["k8s"], "at": m["exported_at"]})
         else:
             jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": m["exported_at"]})
-            print(f"AWS export of account {m.get('account_id')} taken at {m['exported_at']}")
+            print(f"AWS export of account {term(m.get('account_id'))} taken at {m['exported_at']}")
             for bucket, code in sorted((m.get("not_evaluated") or {}).items()):
-                print(f"bucket {bucket}: tags not read ({code}); shown as not evaluated")
+                print(f"bucket {term(bucket)}: tags not read ({term(code)}); shown as not evaluated")
     typed = {"aws": aws if all(aws) else None, "k8s": a.k8s, "ai": a.ai}
     if any(typed.values()):
         jobs.append({**typed, "at": a.at and _ts(a.at)})
@@ -171,7 +173,7 @@ def _ingest(a, store, pipe, clock):
     store.commit()
     if errors:
         for e in errors:
-            print(f"collector failed: {e}", file=sys.stderr)
+            print(f"collector failed: {term(e, 1000)}", file=sys.stderr)
         print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
         return 2
     print(f"opened {opened}, resolved {resolved} findings")

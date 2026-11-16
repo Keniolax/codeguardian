@@ -24,6 +24,21 @@ CHANGE_COUNTERS = {
 }
 
 
+def term(text, limit=500):
+    """Text from the environment, made safe for one terminal line: every character that is
+    not printable (newline, escape, bidi controls) is shown as an escape, so a value cannot
+    break a line, forge one, or send terminal control codes."""
+    out = []
+    for c in str(text)[:limit]:
+        if c.isprintable():
+            out.append(c)
+        elif ord(c) < 0x100:
+            out.append(f"\\x{ord(c):02x}")
+        else:
+            out.append(f"\\u{ord(c):04x}")
+    return "".join(out)
+
+
 def _list(values, limit=400):
     return ", ".join(safe(v, limit) for v in values) or "none"
 

@@ -347,3 +347,71 @@ def test_same_change_twice_at_the_same_time_counts_once_without_a_marker(tmp_pat
     assert store.entity(ROLE)["attrs"]["change_markers"] == []
     assert store.findings(status="open", rule_id="POST-IAM-003") == []
     assert len(store.findings(status="open", rule_id="PATH-AI-001")) == 1
+
+
+# --- names from the environment: never an option, never a broken or forged line ----------------
+
+HOSTILE = ["--endpoint-url=http://203.0.113.9", "bad\nname", "x\nexported account forged at now to exports"]
+
+
+def _with_hostile_buckets():
+    plan = recorded_plan()
+    buckets = fixture("aws/s3-buckets.json")
+    buckets["Buckets"] += [{"Name": n, "CreationDate": "2026-09-01T12:00:00+00:00"} for n in HOSTILE]
+    plan["aws s3api list-buckets --output json"] = {"stdout": json.dumps(buckets)}
+    return plan
+
+
+def test_bucket_names_that_are_not_valid_never_reach_the_cli(tmp_path, fake_cli):
+    fake_cli(_with_hostile_buckets())
+    assert run_export("aws", tmp_path / "a") == 0
+    ran = [arg for argv in fake_cli.log() for arg in argv]
+    for name in HOSTILE:
+        assert name not in ran
+        assert not any(name in arg for arg in ran)
+    tags = json.loads((tmp_path / "a" / "s3-tags.json").read_text())
+    for name in HOSTILE:
+        assert tags[name]["Error"]["Code"] == "InvalidBucketName"
+    m = json.loads((tmp_path / "a" / "aws-manifest.json").read_text())
+    assert set(m["not_evaluated"]) == set(HOSTILE)
+
+
+def _lines_are_clean(text):
+    assert "\x1b" not in text and "‮" not in text
+    assert not any(line.startswith("exported account forged") for line in text.splitlines())
+
+
+def test_names_and_cli_errors_cannot_break_or_forge_a_terminal_line(tmp_path, fake_cli, capsys):
+    fake_cli(_with_hostile_buckets())
+    assert run_export("aws", tmp_path / "a") == 0
+    out = capsys.readouterr()
+    text = out.out + out.err
+    _lines_are_clean(text)
+    assert "bad\\x0aname" in text  # shown, escaped
+    db = tmp_path / "m.db"
+    assert ingest(db, "--aws-export", str(tmp_path / "a")) == 0
+    out = capsys.readouterr()
+    _lines_are_clean(out.out + out.err)
+    assert "bad\\x0aname" in out.out
+    plan = recorded_plan()
+    plan["kubectl config current-context"] = {"stdout": "lab\n"}
+    plan[KUBECTL_GET] = {"code": 1, "stderr": "error: \x1b[2Jdenied\nexported account forged at now to exports ‮\n"}
+    fake_cli(plan)
+    assert run_export("k8s", tmp_path / "k") == 2
+    out = capsys.readouterr()
+    _lines_are_clean(out.out + out.err)
+    assert "\\x1b[2J" in out.err
+
+
+def test_default_output_is_a_plain_directory_under_exports(tmp_path, fake_cli, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    fake_cli(recorded_plan())
+    assert export_main(["aws", "--now", AT]) == 0
+    assert export_main(["k8s", "--now", AT]) == 0
+    assert (tmp_path / "exports" / "aws" / "aws-manifest.json").is_file()
+    assert (tmp_path / "exports" / "k8s" / "k8s-manifest.json").is_file()
+    assert sorted(p.name for p in (tmp_path / "exports").iterdir()) == ["aws", "k8s"]
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        export_main(["aws", "--help"])
+    assert "(default: exports/aws)" in capsys.readouterr().out
