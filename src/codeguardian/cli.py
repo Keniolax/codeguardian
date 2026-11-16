@@ -34,7 +34,14 @@ def main(argv=None):
     p.add_argument("--head-sha", required=True)
     p.add_argument("--pr", type=int, required=True)
 
+    from .v2 import cli as v2_cli
+
+    v2_cli.add_subcommands(sub)
+
     a = ap.parse_args(argv)
+
+    if a.cmd in v2_cli.COMMANDS:
+        return v2_cli.run(a)
 
     if a.cmd == "review":
         from .providers import get_provider

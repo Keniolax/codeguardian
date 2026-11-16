@@ -1,0 +1,31 @@
+# Posture rules: conditions on one entity's typed attrs.
+
+[[rule]]
+id = "POST-IAM-001"
+version = 1
+kind = "posture"
+severity = "high"
+title = "A role policy allows every action on every resource"
+frameworks = []
+entity = "iam_role"
+where = [{ attr = "admin_wildcard", op = "eq", value = true }]
+
+[[rule]]
+id = "POST-IAM-002"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "A role has policies whose documents the model does not hold, so its permissions are not fully known"
+frameworks = []
+entity = "iam_role"
+where = [{ attr = "unknown_policy_documents", op = "nonempty" }]
+
+[[rule]]
+id = "POST-K8S-001"
+version = 1
+kind = "posture"
+severity = "high"
+title = "A pod runs a privileged container"
+frameworks = []
+entity = "pod"
+where = [{ attr = "privileged", op = "eq", value = true }]

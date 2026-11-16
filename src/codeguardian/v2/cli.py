@@ -1,0 +1,208 @@
+"""Command line for version 2: ingest, watch, findings, incidents, plan, explain, bench."""
+
+import json
+import platform
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+COMMANDS = ("ingest", "watch", "findings", "incidents", "plan", "explain", "bench")
+FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "chain"
+
+
+def add_subcommands(sub):
+    def common(p):
+        p.add_argument("--db", required=True, help="SQLite file holding the model")
+        p.add_argument("--now", help="RFC 3339 time to treat as now (for recorded data); default: the system clock")
+        p.add_argument("--cluster", default="lab", help="Kubernetes cluster name used in entity IDs")
+        return p
+
+    p = common(sub.add_parser("ingest", help="read exported snapshots into the model"))
+    p.add_argument("--aws-iam", help="aws iam get-account-authorization-details output")
+    p.add_argument("--aws-buckets", help="aws s3api list-buckets output")
+    p.add_argument("--aws-tags", help="bucket name -> get-bucket-tagging output")
+    p.add_argument("--k8s", help="kubectl get pods,services,serviceaccounts,networkpolicies -A -o json output")
+    p.add_argument("--ai", help="declared AI inventory")
+    p.add_argument("--at", help="time the snapshot was taken (RFC 3339); default: now")
+
+    p = common(sub.add_parser("watch", help="process events one by one as they arrive"))
+    p.add_argument("--input", default="-", help="NDJSON file, or - for stdin")
+    p.add_argument("--follow", action="store_true", help="keep reading a file as it grows")
+
+    p = common(sub.add_parser("findings", help="list findings"))
+    p.add_argument("--status", choices=["open", "resolved"])
+    common(sub.add_parser("incidents", help="list incidents with their timelines"))
+    p = common(sub.add_parser("plan", help="print the dry-run response plan for an incident"))
+    p.add_argument("--incident", required=True, help="incident ID or a unique prefix of it")
+    p = common(sub.add_parser("explain", help="ask the model to explain an incident"))
+    p.add_argument("--incident", required=True)
+    p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
+    p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
+
+    p = sub.add_parser("bench", help="replay the chain mixed with seeded noise and time each event")
+    p.add_argument("--events", type=int, default=10_000, help="noise events to add to the chain")
+    p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--fixtures", default=str(FIXTURES))
+    p.add_argument("--db", help="SQLite file; default: a new file in a temporary directory")
+    p.add_argument("--write-events", help="also save the generated NDJSON here")
+
+
+def _setup(a):
+    from .pipeline import Pipeline
+    from .rules import load_rules
+    from .schema import FixedClock, SystemClock
+    from .store import Store
+
+    clock = FixedClock(a.now) if a.now else SystemClock()
+    store = Store(a.db)
+    return store, Pipeline(store, load_rules(), clock, a.cluster), clock
+
+
+def _incident(store, ref):
+    hits = [i for i in store.incidents() if i["incident_id"].startswith(ref)]
+    if len(hits) != 1:
+        raise SystemExit(f"no single incident matches {ref!r} ({len(hits)} match)")
+    return hits[0]
+
+
+def run(a):
+    if a.cmd == "bench":
+        return _bench(a)
+    from . import render
+    from .collectors import CollectorError
+
+    store, pipe, clock = _setup(a)
+    if a.cmd == "ingest":
+        aws = (a.aws_iam, a.aws_buckets, a.aws_tags)
+        if any(aws) and not all(aws):
+            raise SystemExit("--aws-iam, --aws-buckets and --aws-tags go together")
+        try:
+            changes = pipe.snapshot(aws=aws if all(aws) else None, k8s=a.k8s, ai=a.ai, at=a.at and _ts(a.at))
+        except CollectorError as exc:
+            print(f"collector failed: {exc}", file=sys.stderr)
+            print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
+            return 2
+        print(f"opened {len(changes['opened'])}, resolved {len(changes['resolved'])} findings")
+        return 0
+    if a.cmd == "watch":
+        return _watch(a, store, pipe)
+    if a.cmd == "findings":
+        sys.stdout.write(render.findings(store, clock.now(), a.status))
+        return 0
+    if a.cmd == "incidents":
+        sys.stdout.write(render.incidents(store))
+        return 0
+    if a.cmd == "plan":
+        from .respond import plan
+
+        sys.stdout.write(render.plan(plan(store, _incident(store, a.incident))))
+        return 0
+    if a.cmd == "explain":
+        from .explain import RecordedProvider, explain
+
+        if a.provider == "recorded":
+            if not a.answer:
+                raise SystemExit("--provider recorded needs --answer")
+            provider = RecordedProvider(a.answer)
+        else:
+            from ..providers import get_provider
+
+            provider = get_provider(a.provider)
+        sys.stdout.write(render.explanation(explain(store, _incident(store, a.incident), provider)))
+        return 0
+    return 1
+
+
+def _ts(value):
+    from .schema import ts
+
+    return ts(value)
+
+
+def _lines(path, follow):
+    stream = sys.stdin if path == "-" else open(path, encoding="utf-8")
+    try:
+        while True:
+            line = stream.readline()
+            if line:
+                yield line
+            elif follow and path != "-":
+                time.sleep(0.5)
+            else:
+                return
+    finally:
+        if stream is not sys.stdin:
+            stream.close()
+
+
+def _watch(a, store, pipe):
+    from ..render import safe
+
+    seen = dup = bad = 0
+    try:
+        for line in _lines(a.input, a.follow):
+            if not line.strip():
+                continue
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError as exc:
+                bad += 1
+                print(f"skipped a line that is not JSON: {exc}", file=sys.stderr)
+                continue
+            r = pipe.process(raw)
+            seen += 1
+            if r["status"] == "duplicate":
+                dup += 1
+                continue
+            if r["status"] == "unparseable":
+                bad += 1
+                print(f"skipped a record: {safe(r['error'])}", file=sys.stderr)
+                continue
+            for verb in ("opened", "resolved", "alerts"):
+                for fid in r[verb]:
+                    f = store.finding(fid)
+                    print(f"{safe(r['action'], 120)}: {verb[:-1] if verb == 'alerts' else verb} {f['rule_id']}"
+                          f" {fid} {safe(f['title'], 160)}")
+            sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
+    print(f"records read {seen}, duplicates {dup}, skipped {bad}", file=sys.stderr)
+    return 0
+
+
+def _bench(a):
+    from . import correlate
+    from .gen import bench, generate
+    from .pipeline import Pipeline
+    from .rules import load_rules
+    from .schema import FixedClock
+    from .store import Store
+
+    fx = Path(a.fixtures)
+    lines = generate((fx / "events" / "chain.ndjson").read_text(encoding="utf-8").splitlines(), a.events, a.seed)
+    if a.write_events:
+        Path(a.write_events).write_text("".join(lines), encoding="utf-8")
+    db = a.db or str(Path(tempfile.mkdtemp(prefix="codeguardian-bench-")) / "bench.db")
+    store = Store(db)
+    pipe = Pipeline(store, load_rules(), FixedClock("2026-11-14T10:30:00Z"))
+    pipe.snapshot(aws=(fx / "aws" / "iam.json", fx / "aws" / "s3-buckets.json", fx / "aws" / "s3-tags.json"),
+                  k8s=fx / "k8s" / "state.json", ai=fx / "ai" / "inventory.json", at="2026-11-14T09:00:00.000000Z")
+    result = bench(pipe, lines)
+    chain_incident = next((i for i in store.incidents()
+                           if any(store.finding(f)["rule_id"] == "DET-AI-001" for f in i["finding_ids"])), None)
+    result.update(
+        seed=a.seed, noise_events=a.events, chain_events=len(lines) - a.events,
+        store=f"SQLite file on disk ({db}), WAL, one commit per event",
+        machine=f"{platform.machine()} {platform.processor() or ''} {platform.platform()}".strip(),
+        python=platform.python_version(),
+        path_findings={f["status"]: 1 for f in store.findings(rule_id="PATH-AI-001")},
+        chain_incident_rules=sorted({store.finding(f)["rule_id"] for f in chain_incident["finding_ids"]})
+        if chain_incident else [],
+        chain_incident_timeline_events=len(correlate.timeline(store, chain_incident)) if chain_incident else 0,
+        incidents=len(store.incidents()), counters=store.counters(),
+        note="Pipeline time only. It does not include the source's own delivery delay; CloudTrail delivers"
+             " records minutes after the call.",
+    )
+    print(json.dumps(result, indent=2))
+    return 0

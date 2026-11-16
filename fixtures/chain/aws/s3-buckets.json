@@ -1,0 +1,20 @@
+{
+  "Buckets": [
+    {
+      "Name": "example-agent-kb",
+      "CreationDate": "2026-09-01T12:00:00+00:00"
+    },
+    {
+      "Name": "example-finance-records",
+      "CreationDate": "2026-09-01T12:00:00+00:00"
+    },
+    {
+      "Name": "example-web-assets",
+      "CreationDate": "2026-09-01T12:00:00+00:00"
+    }
+  ],
+  "Owner": {
+    "DisplayName": "example-owner",
+    "ID": "EXAMPLE-CANONICAL-USER-ID"
+  }
+}

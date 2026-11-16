@@ -1,0 +1,32 @@
+{
+  "format": "codeguardian.ai-inventory/v1",
+  "agents": [
+    {
+      "name": "sentinel-agent",
+      "runs_in": {
+        "kind": "pod",
+        "cluster": "lab",
+        "namespace": "agents",
+        "name": "sentinel-agent-7d9f"
+      },
+      "model": {
+        "endpoint": "https://models.example.com/v1/messages"
+      },
+      "tools": [
+        {
+          "name": "search_knowledge_base",
+          "reads": [
+            {
+              "kind": "s3_bucket",
+              "name": "example-agent-kb"
+            }
+          ]
+        },
+        {
+          "name": "summarize_ticket",
+          "reads": []
+        }
+      ]
+    }
+  ]
+}

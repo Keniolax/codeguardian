@@ -1,0 +1,75 @@
+# Detection rules: a match on one event, then conditions on the model the event joins.
+
+[[rule]]
+id = "DET-AI-001"
+version = 1
+kind = "detection"
+severity = "high"
+title = "An AI agent's role read an S3 bucket that none of the agent's tools declares"
+frameworks = ["ASI02", "T1530"]
+match = { source = "aws.cloudtrail", actions = ["aws:s3:GetObject"], outcome = "success", actor_type = "iam_role" }
+
+[[rule.when]]
+from = "actor"
+walk = [
+  { edge = "assumes", dir = "in", to = "service_account" },
+  { edge = "runs_as", dir = "in", to = "pod" },
+  { edge = "contains", dir = "out", to = "agent" },
+]
+bind = "agent"
+
+[[rule.when]]
+from = "agent"
+walk = [
+  { edge = "can_call", dir = "out", to = "tool" },
+  { edge = "reads", dir = "out", to = "s3_bucket" },
+]
+excludes = "targets"
+
+[[rule]]
+id = "DET-AI-002"
+version = 1
+kind = "detection"
+severity = "high"
+title = "Permissions were added to a role that an AI agent runs as"
+frameworks = ["T1098.003"]
+match = { source = "aws.cloudtrail", actions = ["aws:iam:PutRolePolicy", "aws:iam:AttachRolePolicy"], outcome = "success" }
+
+[[rule.when]]
+from = "targets"
+walk = [
+  { edge = "assumes", dir = "in", to = "service_account" },
+  { edge = "runs_as", dir = "in", to = "pod" },
+  { edge = "contains", dir = "out", to = "agent" },
+]
+bind = "agent"
+
+[[rule]]
+id = "DET-RT-001"
+version = 1
+kind = "detection"
+severity = "medium"
+title = "A shell started in a container"
+frameworks = ["T1059.004"]
+match = { source = "k8s.runtime", actions = ["falco:Terminal shell in container"], actor_type = "pod" }
+
+[[rule]]
+id = "DET-RT-002"
+version = 1
+kind = "detection"
+severity = "high"
+title = "A process read a service account token in a pod"
+frameworks = ["T1528"]
+# "Read service account token" is a custom Falco rule in the fixtures, not a default one.
+match = { source = "k8s.runtime", actions = ["falco:Read service account token"], actor_type = "pod", attrs = [
+  { attr = "fd.name", op = "prefix", value = "/var/run/secrets/" },
+] }
+
+[[rule]]
+id = "DET-K8S-001"
+version = 1
+kind = "detection"
+severity = "medium"
+title = "Someone ran a command in a pod through the API server (pods/exec)"
+frameworks = ["T1609"]
+match = { source = "k8s.audit", actions = ["k8s:pods/exec:create"], outcome = "success" }

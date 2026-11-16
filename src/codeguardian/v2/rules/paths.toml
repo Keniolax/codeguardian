@@ -1,0 +1,38 @@
+# Path rules: typed hops from a start entity. Each complete walk is one finding.
+
+[[rule]]
+id = "PATH-AI-001"
+version = 1
+kind = "path"
+severity = "critical"
+title = "An AI agent reachable from the internet runs with an identity that can read sensitive data"
+frameworks = []
+start = "internet"
+
+[[rule.hops]]
+edge = "reachable_from"
+dir = "in"
+to = "service"
+
+[[rule.hops]]
+edge = "exposes"
+dir = "out"
+to = "pod"
+require = [{ edge = "contains", dir = "out", to = "agent" }]
+
+[[rule.hops]]
+edge = "runs_as"
+dir = "out"
+to = "service_account"
+
+[[rule.hops]]
+edge = "assumes"
+dir = "out"
+to = "iam_role"
+
+[[rule.hops]]
+edge = "has_permission"
+dir = "out"
+to = "s3_bucket"
+edge_allows = ["s3:GetObject"]
+where = [{ attr = "sensitive", op = "eq", value = true }]
