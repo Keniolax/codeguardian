@@ -8,6 +8,8 @@ them, so respond.py instead accepts only values that match strict patterns, and 
 them for the shell.
 """
 
+import json
+
 from ..render import safe
 from . import respond
 from .correlate import all_entities, members, timeline
@@ -124,4 +126,14 @@ def explanation(result):
         out.append(f"- model suggests {safe(a['action_id'])} ({params}); checked against the catalog, not executed")
     out.append(f"Entries dropped by validation: {len(result['dropped'])}. Findings come from rules; the model"
                " cannot add, close or change one.")
+    return "\n".join(out) + "\n"
+
+
+def answer(result):
+    out = [f"Query (written by {safe(result.get('served_by') or 'no model')}, checked and run read-only):",
+           safe(json.dumps(result["query"], sort_keys=True), 2000), f"Note: {safe(result.get('note', ''), 500)}", ""]
+    out += [f"- {safe(r['id'], 300)}" + (f" (from {safe(r['from'], 300)})" if r["from"] != r["id"] else "")
+            for r in result["rows"]] or ["- no rows"]
+    if result["truncated"]:
+        out.append("(stopped at the limit)")
     return "\n".join(out) + "\n"

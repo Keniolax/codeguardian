@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 V2 = "src/codeguardian/v2/"
 CHAIN = "tests/test_v2_chain.py"
 CORE = "tests/test_v2_core.py"
+ASK = "tests/test_v2_ask.py"
 
 
 def T(name, file=CHAIN):
@@ -200,6 +201,14 @@ MUTANTS = [
      '             f"no tagging output for bucket {name!r}; tags were not collected")\n',
      '        tags.setdefault(name, {"TagSet": []})\n',
      [T("test_missing_bucket_tags_refuse_the_snapshot", CORE)]),
+    # ask (stretch): the model's query is checked before it runs.
+    ("ask accepts unknown query keys", V2 + "ask.py",
+     "    if extra:\n        raise QueryError(f\"unknown query keys {sorted(extra)}\")", "    pass",
+     [T("test_ask_refuses_malformed_and_out_of_schema_queries[query2]", ASK)]),
+    ("ask skips the condition check", V2 + "ask.py",
+     "        for c in where:\n            R._cond(c, {\"id\": \"query\"}, q[\"find\"])", "        pass",
+     [T("test_ask_refuses_malformed_and_out_of_schema_queries[query4]", ASK),
+      T("test_ask_refuses_malformed_and_out_of_schema_queries[query5]", ASK)]),
     ("resolver hides Condition", V2 + "policy.py",
      '                    if conditional:\n                        g["not_evaluated"].add(f"Condition in {where} not evaluated")',
      '                    pass',

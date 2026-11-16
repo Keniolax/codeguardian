@@ -1,4 +1,4 @@
-"""Command line for version 2: ingest, watch, findings, incidents, plan, explain, bench."""
+"""Command line for version 2: ingest, watch, findings, incidents, plan, explain, ask, bench."""
 
 import json
 import platform
@@ -7,7 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 
-COMMANDS = ("ingest", "watch", "findings", "incidents", "plan", "explain", "bench")
+COMMANDS = ("ingest", "watch", "findings", "incidents", "plan", "explain", "ask", "bench")
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "chain"
 
 
@@ -37,6 +37,11 @@ def add_subcommands(sub):
     p.add_argument("--incident", required=True, help="incident ID or a unique prefix of it")
     p = common(sub.add_parser("explain", help="ask the model to explain an incident"))
     p.add_argument("--incident", required=True)
+    p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
+    p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
+
+    p = common(sub.add_parser("ask", help="ask a question; the model writes a query, code checks and runs it"))
+    p.add_argument("--question", required=True)
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
     p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
 
@@ -98,7 +103,7 @@ def run(a):
 
         sys.stdout.write(render.plan(plan(store, _incident(store, a.incident))))
         return 0
-    if a.cmd == "explain":
+    if a.cmd in ("explain", "ask"):
         from .explain import RecordedProvider, explain
 
         if a.provider == "recorded":
@@ -109,7 +114,16 @@ def run(a):
             from ..providers import get_provider
 
             provider = get_provider(a.provider)
-        sys.stdout.write(render.explanation(explain(store, _incident(store, a.incident), provider)))
+        if a.cmd == "explain":
+            sys.stdout.write(render.explanation(explain(store, _incident(store, a.incident), provider)))
+            return 0
+        from .ask import QueryError, ask
+
+        try:
+            sys.stdout.write(render.answer(ask(store, a.question, provider)))
+        except QueryError as exc:
+            print(f"query refused: {exc}", file=sys.stderr)
+            return 2
         return 0
     return 1
 

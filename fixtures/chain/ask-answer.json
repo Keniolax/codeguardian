@@ -1,0 +1,1 @@
+{"query": {"find": "s3_bucket", "where": [{"attr": "sensitive", "op": "eq", "value": true}], "related": [{"edge": "has_permission", "dir": "in", "to": "iam_role"}], "limit": 20}, "note": "Hand-written answer for the offline demo: roles with a permission edge to a sensitive bucket."}
