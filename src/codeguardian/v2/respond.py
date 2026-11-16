@@ -123,7 +123,7 @@ def plan(store, incident):
             for b in f["path"]:
                 wanted += _grant_actions(store, f["primary_entity"], b, f["finding_id"])
         if f["kind"] == "detection" and f["rule_id"].startswith(("DET-RT-", "DET-K8S-")):
-            pod_ids = [e for e in [f["primary_entity"], *f["path"]] if e.startswith("k8s:pod:")]
+            pod_ids = sorted({e for e in [f["primary_entity"], *f["path"]] if e.startswith("k8s:pod:")})
             for pid in pod_ids:
                 pod = store.entity(pid)
                 if pod:
@@ -133,7 +133,8 @@ def plan(store, incident):
     for action_id, params, reason in wanted:
         key = (action_id, tuple(sorted(params.items())))
         if key in seen:
-            seen[key]["because"].append(reason)
+            if reason not in seen[key]["because"]:
+                seen[key]["because"].append(reason)
             continue
         try:
             step = check_action(action_id, params)
