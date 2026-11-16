@@ -92,6 +92,19 @@ def test_a_irsa_needs_the_role_trust_to_name_the_service_account(tmp_path):
     assert path_findings(store) == []
 
 
+def test_a_role_must_be_able_to_read_not_only_write_or_list(tmp_path):
+    def write_and_list(iam):
+        role_entry(iam, "sentinel-agent")["RolePolicyList"].append({"PolicyName": "finance-drop", "PolicyDocument": {
+            "Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": ["s3:PutObject", "s3:ListBucket"],
+                                                    "Resource": ["arn:aws:s3:::example-finance-records",
+                                                                 "arn:aws:s3:::example-finance-records/*"]}]}})
+
+    store, _ = build(tmp_path, iam="aws/iam.json", edit_iam=write_and_list)
+    assert live_edge(store, "has_permission")
+    assert store.edge(edge_id("has_permission", ROLE, FINANCE))["attrs"]["actions"] == ["s3:ListBucket", "s3:PutObject"]
+    assert path_findings(store) == []
+
+
 def test_a_bucket_must_be_sensitive(tmp_path):
     store, _ = build(tmp_path, edit_tags=lambda t: t["example-finance-records"]["TagSet"].__setitem__(
         0, {"Key": "data-classification", "Value": "internal"}))
@@ -118,9 +131,9 @@ def test_b_event_opens_the_path_and_its_reversal_resolves_the_same_finding(tmp_p
     assert store.sources() == sources_before  # no snapshot ran
 
 
-def _attach(name, arn, n):
+def _attach(name, arn, n, time="2026-11-14T10:00:00Z"):
     ev = iam_event("PutRolePolicy")
-    ev.update(eventName=name, eventID=f"6f1c2a9e-0000-4000-8000-{n:012d}",
+    ev.update(eventName=name, eventID=f"6f1c2a9e-0000-4000-8000-{n:012d}", eventTime=time,
               requestParameters={"roleName": "sentinel-agent", "policyArn": arn})
     return ev
 
@@ -130,7 +143,7 @@ def test_b_attach_of_a_policy_the_model_holds_opens_and_detach_resolves(tmp_path
     arn = f"arn:aws:iam::{ACCT}:policy/finance-export"
     pipe.process(_attach("AttachRolePolicy", arn, 900))
     (f,) = path_findings(store)
-    pipe.process(_attach("DetachRolePolicy", arn, 901))
+    pipe.process(_attach("DetachRolePolicy", arn, 901, "2026-11-14T10:05:00Z"))
     assert path_findings(store) == [] and path_findings(store, "resolved")[0]["finding_id"] == f["finding_id"]
 
 
@@ -170,6 +183,95 @@ def test_b_event_older_than_the_snapshot_is_not_applied(tmp_path):
     pipe.process(ev)
     assert path_findings(store) == []
     assert store.counters()["model_change_older_than_model"] == 1
+
+
+def _put(name, doc, time, n):
+    ev = iam_event("PutRolePolicy")
+    ev.update(eventTime=time, eventID=f"6f1c2a9e-0000-4000-8000-{n:012d}")
+    ev["requestParameters"].update(policyName=name, policyDocument=json.dumps(doc))
+    return ev
+
+
+FINANCE_READ = {"Version": "2012-10-17", "Statement": [
+    {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::example-finance-records/*"}]}
+KB_ONLY = {"Version": "2012-10-17", "Statement": [
+    {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::example-agent-kb/*"}]}
+
+
+def test_b_delete_then_late_put_ends_with_no_path_finding(tmp_path):
+    store, pipe = build(tmp_path, iam="aws/iam.json")
+    pipe.process(iam_event("DeleteRolePolicy"))  # 10:20, arrives first
+    pipe.process(iam_event("PutRolePolicy"))  # 10:00, arrives late
+    assert "reports-read" not in store.entity(ROLE)["attrs"]["inline_policies"]
+    assert store.findings(rule_id="PATH-AI-001") == []
+    assert store.counters()["model_change_superseded"] == 1
+
+
+def test_b_late_put_of_another_policy_still_applies(tmp_path):
+    store, pipe = build(tmp_path, iam="aws/iam.json")
+    pipe.process(_put("kb-extra", KB_ONLY, "2026-11-14T10:00:00Z", 910))
+    pipe.process(_put("finance-direct", FINANCE_READ, "2026-11-14T09:58:00Z", 911))  # older, other policy
+    assert set(store.entity(ROLE)["attrs"]["inline_policies"]) == {"kb-read", "kb-extra", "finance-direct"}
+    (f,) = path_findings(store)
+    assert store.edge(edge_id("has_permission", ROLE, FINANCE))["attrs"]["policies"] == ["inline:finance-direct"]
+
+
+def _final_state(store):
+    role = store.entity(ROLE)["attrs"]
+    edges = sorted((e["src"], e["dst"], json.dumps(e["attrs"], sort_keys=True))
+                   for e in store.edges(etype="has_permission"))
+    return json.dumps([role, edges, open_rules(store), sorted(f["finding_id"] for f in store.findings(status="open"))],
+                      sort_keys=True)
+
+
+def test_b_every_order_of_the_iam_changes_ends_the_same(tmp_path):
+    from itertools import permutations
+
+    arn = f"arn:aws:iam::{ACCT}:policy/finance-export"
+    records = [iam_event("PutRolePolicy"), iam_event("DeleteRolePolicy"),
+               _attach("AttachRolePolicy", arn, 920, "2026-11-14T10:05:00Z"),
+               _attach("DetachRolePolicy", arn, 921, "2026-11-14T10:10:00Z")]
+    finals = set()
+    for n, order in enumerate(permutations(records)):
+        (tmp_path / str(n)).mkdir()
+        store, pipe = build(tmp_path / str(n), iam="aws/iam.json")
+        for ev in order:
+            pipe.process(json.loads(json.dumps(ev)))
+        assert path_findings(store) == [], order
+        finals.add(_final_state(store))
+    assert len(finals) == 1  # 24 orders, one final model and one set of open findings
+
+
+def test_b_replay_after_out_of_order_changes_changes_nothing(tmp_path):
+    store, pipe = build(tmp_path, iam="aws/iam.json")
+    late = [iam_event("DeleteRolePolicy"), iam_event("PutRolePolicy")]
+    _replay(pipe, late)
+    before = dump(store)
+    assert all(pipe.process(e)["status"] == "duplicate" for e in late)
+    after = dump(store)
+    assert {k: v for k, v in after.items() if k != "counters"} == {k: v for k, v in before.items() if k != "counters"}
+
+
+def test_b_two_changes_at_the_same_time_are_marked_not_dropped(tmp_path):
+    store, pipe = build(tmp_path, iam="aws/iam.json")
+    put = iam_event("PutRolePolicy")
+    delete = iam_event("DeleteRolePolicy")
+    delete["eventTime"] = put["eventTime"]
+    pipe.process(put)
+    pipe.process(delete)
+    (marker,) = store.findings(status="open", rule_id="POST-IAM-003")
+    assert any("order unknown" in n for n in marker["notes"])
+
+
+def test_b_snapshot_keeps_newer_event_changes_and_supersedes_older_ones(tmp_path):
+    store, pipe = build(tmp_path, iam="aws/iam.json")
+    pipe.process(iam_event("PutRolePolicy"))  # 10:00
+    (f,) = path_findings(store)
+    narrow = (FX / "aws" / "iam.json", FX / "aws" / "s3-buckets.json", FX / "aws" / "s3-tags.json")
+    pipe.snapshot(aws=narrow, at="2026-11-14T09:58:00Z")  # taken before the change, ingested after
+    assert [x["finding_id"] for x in path_findings(store)] == [f["finding_id"]]
+    pipe.snapshot(aws=narrow, at="2026-11-14T10:10:00Z")  # taken after: the policy is gone
+    assert path_findings(store) == [] and store.entity(ROLE)["attrs"]["policy_changes"] == {}
 
 
 # --- C: detection joins the event to the model ------------------------------------------------
@@ -213,6 +315,15 @@ def test_c_control_role_entitled_to_the_bucket_raises_nothing(tmp_path):
     assert agent_ev["requestParameters"]["bucketName"] == control_ev["requestParameters"]["bucketName"]
     assert store.edge(edge_id("has_permission", CONTROL_ROLE, FINANCE))
     pipe.process(control_ev)
+    assert _det(store) == [] and pipe.evals["DET-AI-001"] == 1
+
+
+def test_c_denied_read_raises_nothing_but_is_kept(tmp_path):
+    store, pipe = build(tmp_path)
+    ev = get_object("sentinel-agent", "example-finance-records")
+    ev["errorCode"], ev["errorMessage"] = "AccessDenied", "Access Denied"
+    r = pipe.process(ev)
+    assert store.event(r["event_id"])["outcome"] == "failure"
     assert _det(store) == [] and pipe.evals["DET-AI-001"] == 1
 
 

@@ -16,7 +16,7 @@ ENTITY_TYPES = {
     "s3_bucket": ("aws", "cloud", ("name", "sensitive")),
     "iam_role": ("aws", "identity", ("name", "arn", "inline_policies", "attached_policies",
                                      "admin_wildcard", "unknown_policy_documents", "not_evaluated",
-                                     "trust_subjects", "permissions_boundary")),
+                                     "trust_subjects", "permissions_boundary", "policy_changes", "change_markers")),
     "iam_policy": ("aws", "identity", ("name", "arn", "document")),
     "service": ("k8s", "kubernetes", ("name", "namespace", "service_type", "selector", "internet_facing")),
     "pod": ("k8s", "kubernetes", ("name", "namespace", "service_account", "privileged", "node", "pod_labels")),

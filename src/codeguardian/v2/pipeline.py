@@ -182,34 +182,53 @@ class Pipeline:
         return eid if eid and self.store.entity(eid) else None
 
     def _apply_change(self, ev, change):
-        """Apply what an IAM CloudTrail record says changed. The record holds a policy's
-        document only for PutRolePolicy; AttachRolePolicy names an ARN, and the document is
-        known only if the last snapshot held that managed policy."""
+        """Apply what an IAM CloudTrail record says changed.
+
+        CloudTrail delivers records out of order, so each policy keeps the time of its
+        last applied change, deletes and detaches included. A record applies only if it
+        is newer than the last change to that policy and not older than the snapshot that
+        last confirmed the role. A record that cannot be ordered marks the role as not
+        evaluated, so it is never dropped silently.
+
+        The record holds a policy's document only for PutRolePolicy; AttachRolePolicy
+        names an ARN, and the document is known only if the last snapshot held it."""
         role = self.store.find_by_name("iam_role", change["role_name"])
         if role is None:
             self.store.bump("model_change_role_not_in_model")
             return Delta()
-        if ev["time"] < role["observed_at"]:
-            # The snapshot is newer than this record; it already shows the outcome.
+        if ev["time"] < role["last_seen"]:
+            # A snapshot taken after this record already shows its outcome.
             self.store.bump("model_change_older_than_model")
             return Delta()
         a = dict(role["attrs"])
-        inline = dict(a.get("inline_policies", {}))
-        attached = list(a.get("attached_policies", []))
-        op = change["op"]
-        if op == "PutRolePolicy":
-            inline[change["policy_name"]] = aws_collector.decode_document(change["document"])
-        elif op == "DeleteRolePolicy":
-            inline.pop(change["policy_name"], None)
-        elif op == "AttachRolePolicy" and change["policy_arn"] not in attached:
-            attached = sorted(attached + [change["policy_arn"]])
-        elif op == "DetachRolePolicy" and change["policy_arn"] in attached:
-            attached.remove(change["policy_arn"])
+        key = aws_collector.change_key(change)
+        if key is None:
+            return self._mark(role, a, ev, f"{change['op']} at {ev['time']} names no policy; not evaluated")
+        entry = {"time": ev["time"], "op": aws_collector.CHANGE_OPS[change["op"]],
+                 "doc": aws_collector.decode_document(change["document"]) if change["op"] == "PutRolePolicy" else None}
+        changes = dict(a.get("policy_changes") or {})
+        last = changes.get(key)
+        if last and ev["time"] < last["time"]:
+            # A newer change to this policy is already applied; this one is history.
+            self.store.bump("model_change_superseded")
+            return Delta()
+        if last and ev["time"] == last["time"] and (last["op"], last["doc"]) != (entry["op"], entry["doc"]):
+            return self._mark(role, a, ev, f"two different changes to {key} at {ev['time']}; order unknown, not evaluated")
+        changes[key] = entry
+        new = aws_collector.apply_policy_change(a, key, entry)
+        new["policy_changes"] = changes
         delta = Delta()
-        if self.store.set_attrs(role["id"], {**a, "inline_policies": inline, "attached_policies": attached},
-                                observed_at=ev["time"]):
+        if self.store.set_attrs(role["id"], new, observed_at=ev["time"]):
             delta.entity(role["id"], "iam_role")
         self.store.bump("model_changes_applied")
+        return delta.merge(aws_collector.recompute_role(self.store, role["id"], ev["time"], "aws.cloudtrail"))
+
+    def _mark(self, role, a, ev, text):
+        self.store.bump("model_change_not_evaluated")
+        marks = list(a.get("change_markers") or []) + [{"time": ev["time"], "text": text}]
+        delta = Delta()
+        if self.store.set_attrs(role["id"], {**a, "change_markers": marks}, observed_at=ev["time"]):
+            delta.entity(role["id"], "iam_role")
         return delta.merge(aws_collector.recompute_role(self.store, role["id"], ev["time"], "aws.cloudtrail"))
 
     def process(self, raw):

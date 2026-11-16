@@ -98,6 +98,14 @@ def apply(store, data, at):
             "trust_subjects": policy.trust_subjects(decode_document(r.get("AssumeRolePolicyDocument"))),
         }
         old = store.entity(rid)
+        # Changes from CloudTrail newer than this snapshot are not in it yet: re-apply them
+        # on top, in time order. Older ones, and their tombstones, the snapshot supersedes.
+        pending = {k: e for k, e in (old["attrs"].get("policy_changes") or {}).items()
+                   if e["time"] > at} if old else {}
+        for key, e in sorted(pending.items(), key=lambda kv: (kv[1]["time"], kv[0])):
+            attrs = apply_policy_change(attrs, key, e)
+        attrs["policy_changes"] = pending
+        attrs["change_markers"] = [m for m in (old["attrs"].get("change_markers") or []) if m["time"] > at] if old else []
         # Keep the derived attrs from the last resolve so an unchanged role is not a change.
         if old:
             for k in ("admin_wildcard", "unknown_policy_documents", "not_evaluated"):
@@ -144,11 +152,40 @@ def recompute_role(store, rid, at, source):
     for e in store.edges(rid, "has_permission"):
         if e["id"] not in keep and store.delete_edge(e["id"], at):
             delta.edge("has_permission")
+    markers = sorted(set(markers) | {m["text"] for m in a.get("change_markers") or []})
     derived = {"admin_wildcard": admin, "unknown_policy_documents": unknown, "not_evaluated": markers}
     if any(a.get(k) != v for k, v in derived.items()):
         store.set_attrs(rid, {**a, **derived})
         delta.entity(rid, "iam_role")
     return delta
+
+
+CHANGE_OPS = {"PutRolePolicy": "put", "DeleteRolePolicy": "delete", "AttachRolePolicy": "attach",
+              "DetachRolePolicy": "detach"}
+
+
+def change_key(change):
+    """The policy a CloudTrail change is about: inline policies by name, managed by ARN."""
+    if change["op"] in ("PutRolePolicy", "DeleteRolePolicy"):
+        return f"inline:{change['policy_name']}" if change.get("policy_name") else None
+    return change.get("policy_arn") or None
+
+
+def apply_policy_change(attrs, key, entry):
+    """One policy change applied to a copy of the role's attrs. A delete or detach of a
+    policy the role does not hold changes nothing here, but its entry stays as a
+    tombstone, so an older put that arrives later is not applied."""
+    inline = dict(attrs.get("inline_policies") or {})
+    attached = set(attrs.get("attached_policies") or [])
+    if entry["op"] == "put":
+        inline[key[len("inline:"):]] = entry["doc"]
+    elif entry["op"] == "delete":
+        inline.pop(key[len("inline:"):], None)
+    elif entry["op"] == "attach":
+        attached.add(key)
+    elif entry["op"] == "detach":
+        attached.discard(key)
+    return {**attrs, "inline_policies": inline, "attached_policies": sorted(attached)}
 
 
 def role_id_from_arn(arn):
@@ -166,4 +203,5 @@ def role_id_from_arn(arn):
     return None
 
 
-__all__ = ["CollectorError", "load", "apply", "recompute_role", "decode_document", "role_id_from_arn"]
+__all__ = ["CollectorError", "load", "apply", "recompute_role", "decode_document", "role_id_from_arn",
+           "change_key", "apply_policy_change"]
