@@ -22,6 +22,8 @@ V2 = "src/codeguardian/v2/"
 CHAIN = "tests/test_v2_chain.py"
 CORE = "tests/test_v2_core.py"
 ASK = "tests/test_v2_ask.py"
+EXP = "tests/test_v2_export.py"
+EXPORT = "src/codeguardian/export/__init__.py"
 
 
 def T(name, file=CHAIN):
@@ -230,8 +232,7 @@ MUTANTS = [
      '    data = data if isinstance(data, dict) and isinstance(data.get("items"), list) else {"items": []}\n',
      [T("test_bad_k8s_input_fails_loudly_and_marks_facts_stale[{}]", CORE)]),
     ("untagged buckets accepted", V2 + "collectors/aws.py",
-     '        need(isinstance(tags.get(name), dict) and isinstance(tags[name].get("TagSet"), list), "aws s3 tags",\n'
-     '             f"no tagging output for bucket {name!r}; tags were not collected")\n',
+     '        need(ok, "aws s3 tags", f"no tagging output for bucket {name!r}; tags were not collected")\n',
      '        tags.setdefault(name, {"TagSet": []})\n',
      [T("test_missing_bucket_tags_refuse_the_snapshot", CORE)]),
     # ask (stretch): the model's query is checked before it runs.
@@ -257,6 +258,80 @@ MUTANTS = [
      '        elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:',
      '        elif False:',
      [T("test_source_past_its_refresh_period_is_shown_stale", CORE)]),
+    # Export: read-only, and missing knowledge is not safe.
+    ("export runs commands that are not on the read-only list", EXPORT,
+     "    if not allowed(argv):", "    if False:",
+     [T(f"test_run_refuses_any_command_that_is_not_a_listed_read[argv{n}]", EXP) for n in range(5)]),
+    ("failure on a bucket's tags recorded as no tags", EXPORT,
+     '        return {"Error": {"Code": exc.error_code or "Failed", "Message": exc.stderr.strip()[:300]}}',
+     '        return {"TagSet": []}',
+     [T("test_access_denied_on_one_bucket_is_not_evaluated_not_untagged", EXP),
+      T("test_other_failures_on_a_bucket_are_not_evaluated[answer0-SlowDown]", EXP),
+      T("test_other_failures_on_a_bucket_are_not_evaluated[answer2-Failed]", EXP),
+      T("test_other_failures_on_a_bucket_are_not_evaluated[answer3-Timeout]", EXP)]),
+    ("bucket tags that are not JSON recorded as no tags", EXPORT,
+     '        return {"Error": {"Code": "BadOutput", "Message": str(exc)[:300]}}', '        return {"TagSet": []}',
+     [T("test_other_failures_on_a_bucket_are_not_evaluated[answer1-BadOutput]", EXP)]),
+    ("IAM failure does not stop the export", EXPORT,
+     '    iam = run_json(["aws", "iam", "get-account-authorization-details", "--output", "json"], "IAM")',
+     '    try:\n        iam = run_json(["aws", "iam", "get-account-authorization-details", "--output", "json"], "IAM")\n'
+     '    except ExportError:\n        iam = {"RoleDetailList": []}',
+     [T("test_iam_failure_fails_the_export_and_leaves_no_file[iam-denied]", EXP),
+      T("test_iam_failure_fails_the_export_and_leaves_no_file[iam-truncated]", EXP)]),
+    ("output that is not JSON read as empty", EXPORT,
+     '        raise ExportError(f"{what}: the output is not complete JSON ({exc})") from exc',
+     '        return {"RoleDetailList": [], "Buckets": [], "items": [], "TagSet": []}',
+     [T("test_iam_failure_fails_the_export_and_leaves_no_file[iam-truncated]", EXP),
+      T("test_failed_export_leaves_an_earlier_export_whole", EXP)]),
+    ("a command's exit status ignored", EXPORT,
+     "    if proc.returncode != 0:", "    if False:",
+     [T("test_kubectl_failure_fails_the_export_and_leaves_no_file", EXP)]),
+    ("git work tree not checked", EXPORT, "    root = _git_root(out)", "    root = None",
+     [T("test_export_refuses_a_path_git_would_commit", EXP)]),
+    ("export files readable by others", EXPORT, "            os.chmod(tmp, 0o600)", "            os.chmod(tmp, 0o644)",
+     [T("test_files_are_private", EXP)]),
+    ("pod env values kept", EXPORT, '                    env["value"] = "<removed by export>"', "                    pass",
+     [T("test_k8s_export_keeps_no_env_values_or_last_applied_config", EXP)]),
+    ("a write command added to the read-only list", EXPORT,
+     '    ("git", "check-ignore"),\n)', '    ("git", "check-ignore"),\n    ("aws", "iam", "put-role-policy"),\n)',
+     [T("test_the_read_only_list_holds_only_reads", EXP)]),
+    ("kubectl context not pinned", EXPORT,
+     '["kubectl", "get", K8S_KINDS, "-A", "-o", "json", "--context", context]',
+     '["kubectl", "get", K8S_KINDS, "-A", "-o", "json"]',
+     [T("test_every_command_the_export_ran_is_a_read", EXP)]),
+    ("a second place that starts a process", EXPORT,
+     "    for p in [path, *path.parents]:",
+     "    subprocess.run([\"true\"])\n    for p in [path, *path.parents]:",
+     [T("test_only_run_starts_a_process_and_never_through_a_shell", EXP)]),
+    ("cluster name override ignored", EXPORT,
+     '"cluster": cluster_name or context}', '"cluster": context}',
+     [T("test_cluster_name_comes_from_the_manifest", EXP)]),
+    ("default export directory not ignored by git", ".gitignore", "exports/\n", "",
+     [T("test_default_output_directory_is_ignored_here", EXP)]),
+    ("manifest hashes not checked at ingest", V2 + "collectors/manifest.py",
+     "        if sha256(data) != files[name]:", "        if False:",
+     [T("test_ingest_refuses_an_export_whose_file_changed", EXP)]),
+    ("tags that could not be read ingested as untagged", V2 + "collectors/aws.py",
+     '        entry = data["tags"][name]\n',
+     '        entry = data["tags"][name] if "TagSet" in data["tags"][name] else {"TagSet": []}\n',
+     [T("test_access_denied_on_one_bucket_is_not_evaluated_not_untagged", EXP)]),
+    ("path rule for unknown sensitivity matches every bucket", V2 + "rules/paths.toml",
+     'where = [{ attr = "tags_error", op = "nonempty" }]\n', "",
+     [T("test_access_denied_on_one_bucket_is_not_evaluated_not_untagged", EXP)]),
+    ("ingest ignores the manifest's time", V2 + "cli.py",
+     '            jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": m["exported_at"]})',
+     '            jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": None})',
+     [T("test_export_then_ingest_gives_the_same_findings_and_incident_as_the_fixtures", EXP)]),
+    ("ingest ignores the manifest's cluster name", V2 + "cli.py",
+     '            store.set_setting("cluster", m["cluster"])\n', "",
+     [T("test_export_then_ingest_gives_the_same_findings_and_incident_as_the_fixtures", EXP)]),
+    ("records for a role not in the model not shown", V2 + "render.py",
+     '    "model_change_role_not_in_model": "IAM change records for a role the model does not hold (not applied)",\n', "",
+     [T("test_change_record_for_an_unknown_role_shows_in_findings", EXP)]),
+    ("the same change twice at one time marked as a conflict", V2 + "pipeline.py",
+     '        if last and ev["time"] == last["time"] and (last["op"], last["doc"]) != (entry["op"], entry["doc"]):',
+     '        if last and ev["time"] == last["time"]:',
+     [T("test_same_change_twice_at_the_same_time_counts_once_without_a_marker", EXP)]),
     ("resolver hides Condition", V2 + "policy.py",
      '                    if conditional:\n                        g["not_evaluated"].add(f"Condition in {where} not evaluated")',
      '                    pass',
@@ -271,9 +346,13 @@ def pytest(node):
 
 
 def chain_tests():
-    tree = ast.parse((ROOT / CHAIN).read_text())
-    return sorted(n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name[:7] in
-                  {f"test_{c}_" for c in "abcdef"})
+    """Tests that must each have a mutant: A to F in the chain file, and every export test."""
+    out = []
+    for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True)):
+        tree = ast.parse((ROOT / file).read_text())
+        out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
+                and n.name.startswith("test_") and keep(n.name)]
+    return sorted(out)
 
 
 def tree_state():
@@ -286,8 +365,9 @@ def tree_state():
 
 
 def main():
-    covered = {node.split("::", 1)[1].split("[", 1)[0] for *_, tests in MUTANTS for node in tests if node.startswith(CHAIN)}
-    missing = [t for t in chain_tests() if t not in covered]
+    covered = {(node.split("::", 1)[0], node.split("::", 1)[1].split("[", 1)[0]) for *_, tests in MUTANTS
+               for node in tests}
+    missing = [f"{f}::{t}" for f, t in chain_tests() if (f, t) not in covered]
     if missing:
         print("tests with no mutant:", ", ".join(missing))
         return 1
@@ -324,7 +404,7 @@ def main():
         print(f"{verdict:<10} {name:<{width}}  {node}")
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
-          f"{len(results) - caught} not caught; {len(chain_tests())} A-F tests, all covered")
+          f"{len(results) - caught} not caught; {len(chain_tests())} A-F and export tests, all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")
         return 1

@@ -39,3 +39,13 @@ title = "A pod runs a privileged container"
 frameworks = []
 entity = "pod"
 where = [{ attr = "privileged", op = "eq", value = true }]
+
+[[rule]]
+id = "POST-S3-001"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "A bucket's tags could not be read, so whether it holds sensitive data is not known"
+frameworks = []
+entity = "s3_bucket"
+where = [{ attr = "tags_error", op = "nonempty" }]

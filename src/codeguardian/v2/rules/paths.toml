@@ -36,3 +36,42 @@ dir = "out"
 to = "s3_bucket"
 edge_allows = ["s3:GetObject"]
 where = [{ attr = "sensitive", op = "eq", value = true }]
+
+# The same path to a bucket whose tags could not be read. Unknown sensitivity must not
+# read as "not sensitive", so this rule reports what PATH-AI-001 cannot decide.
+[[rule]]
+id = "PATH-AI-002"
+version = 1
+kind = "path"
+severity = "high"
+title = "An AI agent reachable from the internet runs with an identity that can read a bucket whose sensitivity is not known"
+frameworks = []
+start = "internet"
+
+[[rule.hops]]
+edge = "reachable_from"
+dir = "in"
+to = "service"
+
+[[rule.hops]]
+edge = "exposes"
+dir = "out"
+to = "pod"
+require = [{ edge = "contains", dir = "out", to = "agent" }]
+
+[[rule.hops]]
+edge = "runs_as"
+dir = "out"
+to = "service_account"
+
+[[rule.hops]]
+edge = "assumes"
+dir = "out"
+to = "iam_role"
+
+[[rule.hops]]
+edge = "has_permission"
+dir = "out"
+to = "s3_bucket"
+edge_allows = ["s3:GetObject"]
+where = [{ attr = "tags_error", op = "nonempty" }]

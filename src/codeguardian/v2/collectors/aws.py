@@ -4,8 +4,10 @@
   and the managed policies with their versions),
 - `aws s3api list-buckets`,
 - a JSON object mapping each bucket name to its `aws s3api get-bucket-tagging` output.
-  An untagged bucket is recorded as {"TagSet": []}, so a missing entry means the tags were
-  not collected, and the collector refuses the snapshot.
+  An untagged bucket is recorded as {"TagSet": []}. A bucket whose tags could not be read
+  is recorded as {"Error": {"Code": ..., "Message": ...}}: it stays in the model with
+  unknown sensitivity and a tags_error, which rules report. A missing entry means the
+  tags were not collected at all, and the collector refuses the snapshot.
 
 Bucket sensitivity comes from the tag `data-classification`.
 """
@@ -60,8 +62,10 @@ def load(iam_path, buckets_path, tags_path):
     tags = read_json(tags_path, "aws s3 tags")
     need(isinstance(tags, dict), "aws s3 tags", "expected an object of bucket name to get-bucket-tagging output")
     for name in names:
-        need(isinstance(tags.get(name), dict) and isinstance(tags[name].get("TagSet"), list), "aws s3 tags",
-             f"no tagging output for bucket {name!r}; tags were not collected")
+        entry = tags.get(name)
+        ok = isinstance(entry, dict) and (isinstance(entry.get("TagSet"), list) or (
+            isinstance(entry.get("Error"), dict) and isinstance(entry["Error"].get("Code"), str)))
+        need(ok, "aws s3 tags", f"no tagging output for bucket {name!r}; tags were not collected")
     return {"iam": iam, "buckets": names, "tags": tags}
 
 
@@ -72,10 +76,18 @@ def _tags(tag_list):
 def apply(store, data, at):
     delta, seen_entities = Delta(), set()
     for name in data["buckets"]:
-        tags = _tags(data["tags"][name]["TagSet"])
+        entry = data["tags"][name]
         bid = entity_id("s3_bucket", f"arn:aws:s3:::{name}")
-        sensitive = tags.get("data-classification", "").strip().lower() in SENSITIVE_VALUES
-        if store.upsert_entity(bid, "s3_bucket", {"name": name, "sensitive": sensitive}, {"tags": tags}, SOURCE, at):
+        if "Error" in entry:
+            # Not read is not untagged: sensitivity is unknown, and the error says why.
+            err = entry["Error"]
+            tags, attrs = {}, {"name": name, "sensitive": None,
+                               "tags_error": f"{err['Code']}: {str(err.get('Message', ''))[:200]}"}
+        else:
+            tags = _tags(entry["TagSet"])
+            sensitive = tags.get("data-classification", "").strip().lower() in SENSITIVE_VALUES
+            attrs = {"name": name, "sensitive": sensitive, "tags_error": None}
+        if store.upsert_entity(bid, "s3_bucket", attrs, {"tags": tags}, SOURCE, at):
             delta.entity(bid, "s3_bucket")
         seen_entities.add(bid)
     for p in data["iam"]["Policies"]:

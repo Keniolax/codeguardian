@@ -13,7 +13,7 @@ DOMAINS = ("cloud", "kubernetes", "identity", "ai", "saas", "code")
 # type -> (provider prefix of the ID, domain, typed attrs the rules may name)
 ENTITY_TYPES = {
     "internet": ("net", "cloud", ()),
-    "s3_bucket": ("aws", "cloud", ("name", "sensitive")),
+    "s3_bucket": ("aws", "cloud", ("name", "sensitive", "tags_error")),
     "iam_role": ("aws", "identity", ("name", "arn", "inline_policies", "attached_policies",
                                      "admin_wildcard", "unknown_policy_documents", "not_evaluated",
                                      "trust_subjects", "permissions_boundary", "policy_changes", "change_markers")),

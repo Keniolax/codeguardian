@@ -15,7 +15,8 @@ def add_subcommands(sub):
     def common(p):
         p.add_argument("--db", required=True, help="SQLite file holding the model")
         p.add_argument("--now", help="RFC 3339 time to treat as now (for recorded data); default: the system clock")
-        p.add_argument("--cluster", default="lab", help="Kubernetes cluster name used in entity IDs")
+        p.add_argument("--cluster", help="Kubernetes cluster name used in entity IDs; default: the name the"
+                                         " last k8s export recorded, else lab")
         return p
 
     p = common(sub.add_parser("ingest", help="read exported snapshots into the model"))
@@ -25,6 +26,10 @@ def add_subcommands(sub):
     p.add_argument("--k8s", help="kubectl get pods,services,serviceaccounts,networkpolicies -A -o json output")
     p.add_argument("--ai", help="declared AI inventory")
     p.add_argument("--at", help="time the snapshot was taken (RFC 3339); default: now")
+    p.add_argument("--aws-export", help="directory written by `python -m codeguardian.export aws`;"
+                                        " its manifest gives the time")
+    p.add_argument("--k8s-export", help="directory written by `python -m codeguardian.export k8s`;"
+                                        " its manifest gives the time and the cluster name")
 
     p = common(sub.add_parser("watch", help="process events one by one as they arrive"))
     p.add_argument("--input", default="-", help="NDJSON file, or - for stdin")
@@ -61,7 +66,8 @@ def _setup(a):
 
     clock = FixedClock(a.now) if a.now else SystemClock()
     store = Store(a.db)
-    return store, Pipeline(store, load_rules(), clock, a.cluster), clock
+    cluster = a.cluster or store.setting("cluster") or "lab"
+    return store, Pipeline(store, load_rules(), clock, cluster), clock
 
 
 def _incident(store, ref):
@@ -79,17 +85,7 @@ def run(a):
 
     store, pipe, clock = _setup(a)
     if a.cmd == "ingest":
-        aws = (a.aws_iam, a.aws_buckets, a.aws_tags)
-        if any(aws) and not all(aws):
-            raise SystemExit("--aws-iam, --aws-buckets and --aws-tags go together")
-        try:
-            changes = pipe.snapshot(aws=aws if all(aws) else None, k8s=a.k8s, ai=a.ai, at=a.at and _ts(a.at))
-        except CollectorError as exc:
-            print(f"collector failed: {exc}", file=sys.stderr)
-            print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
-            return 2
-        print(f"opened {len(changes['opened'])}, resolved {len(changes['resolved'])} findings")
-        return 0
+        return _ingest(a, store, pipe, clock)
     if a.cmd == "watch":
         return _watch(a, store, pipe)
     if a.cmd == "findings":
@@ -126,6 +122,60 @@ def run(a):
             return 2
         return 0
     return 1
+
+
+def _ingest(a, store, pipe, clock):
+    from .collectors import CollectorError, manifest
+
+    aws = (a.aws_iam, a.aws_buckets, a.aws_tags)
+    if any(aws) and not all(aws):
+        raise SystemExit("--aws-iam, --aws-buckets and --aws-tags go together")
+    if a.aws_export and any(aws):
+        raise SystemExit("use --aws-export or the --aws-* files, not both")
+    if a.k8s_export and a.k8s:
+        raise SystemExit("use --k8s-export or --k8s, not both")
+    jobs, errors = [], []
+    for kind, directory, source in (("k8s", a.k8s_export, "k8s.state"), ("aws", a.aws_export, "aws.state")):
+        if not directory:
+            continue
+        try:
+            paths, m = manifest.read(directory, kind)
+        except CollectorError as exc:
+            store.record_source(source, False, clock.now(), str(exc))
+            errors.append(str(exc))
+            continue
+        if kind == "k8s":
+            if a.cluster and a.cluster != m["cluster"]:
+                raise SystemExit(f"--cluster {a.cluster} does not match the export's cluster {m['cluster']}")
+            pipe.cluster = m["cluster"]
+            store.set_setting("cluster", m["cluster"])
+            jobs.append({"k8s": paths["k8s"], "at": m["exported_at"]})
+        else:
+            jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": m["exported_at"]})
+            print(f"AWS export of account {m.get('account_id')} taken at {m['exported_at']}")
+            for bucket, code in sorted((m.get("not_evaluated") or {}).items()):
+                print(f"bucket {bucket}: tags not read ({code}); shown as not evaluated")
+    typed = {"aws": aws if all(aws) else None, "k8s": a.k8s, "ai": a.ai}
+    if any(typed.values()):
+        jobs.append({**typed, "at": a.at and _ts(a.at)})
+        if a.k8s:
+            store.set_setting("cluster", pipe.cluster)
+    opened = resolved = 0
+    for job in jobs:
+        try:
+            changes = pipe.snapshot(**job)
+        except CollectorError as exc:
+            errors.append(str(exc))
+            continue
+        opened, resolved = opened + len(changes["opened"]), resolved + len(changes["resolved"])
+    store.commit()
+    if errors:
+        for e in errors:
+            print(f"collector failed: {e}", file=sys.stderr)
+        print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
+        return 2
+    print(f"opened {opened}, resolved {resolved} findings")
+    return 0
 
 
 def _ts(value):

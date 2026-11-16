@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS sources (
   name TEXT PRIMARY KEY, status TEXT NOT NULL, last_success TEXT, last_attempt TEXT NOT NULL,
   error TEXT);
 CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 _J = json.dumps
@@ -282,6 +283,13 @@ class Store:
     def bump(self, name, by=1):
         self.db.execute("INSERT INTO counters VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value=value+?",
                         (name, by, by))
+
+    def setting(self, name):
+        r = self.db.execute("SELECT value FROM settings WHERE name=?", (name,)).fetchone()
+        return r["value"] if r else None
+
+    def set_setting(self, name, value):
+        self.db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (name, value))
 
     def counters(self):
         return {r["name"]: r["value"] for r in self.db.execute("SELECT * FROM counters ORDER BY name")}

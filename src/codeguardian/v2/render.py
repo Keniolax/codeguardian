@@ -16,6 +16,12 @@ from .schema import REFRESH_SECONDS, seconds_between
 from .correlate import all_entities, members, timeline
 
 COLLECTORS = ("aws.state", "k8s.state", "ai.inventory")
+CHANGE_COUNTERS = {
+    "model_change_role_not_in_model": "IAM change records for a role the model does not hold (not applied)",
+    "model_change_not_evaluated": "IAM change records that could not be ordered (role marked not evaluated)",
+    "model_change_superseded": "IAM change records older than a change already applied to the same policy",
+    "model_change_older_than_model": "IAM change records older than the snapshot that confirmed the role",
+}
 
 
 def _list(values, limit=400):
@@ -63,11 +69,15 @@ def findings(store, now, status=None):
         out.append("- none")
     counts = store.counters()
     skipped = {k: v for k, v in counts.items() if k.startswith("unevaluable:")}
-    if skipped or counts.get("events_actor_null"):
+    changes = {k: counts.get(k, 0) for k in CHANGE_COUNTERS}
+    if skipped or counts.get("events_actor_null") or any(changes.values()):
         out += ["", "Not evaluated:"]
         out.append(f"- events whose actor was not resolved: {int(counts.get('events_actor_null', 0))}")
         for k, v in sorted(skipped.items()):
             out.append(f"- {safe(k.split(':', 1)[1])} could not evaluate {int(v)} events (actor not resolved)")
+        for k, text in CHANGE_COUNTERS.items():
+            if changes[k]:
+                out.append(f"- {text}: {int(changes[k])}")
     return "\n".join(out) + "\n"
 
 

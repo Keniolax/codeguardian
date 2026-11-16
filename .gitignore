@@ -6,3 +6,4 @@ report.json
 demo.db
 demo.db-wal
 demo.db-shm
+exports/
