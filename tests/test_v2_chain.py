@@ -370,6 +370,10 @@ def test_f_planted_text_changes_no_finding_incident_or_plan(tmp_path):
     assert INJECT in json.dumps(planted.entity(POD)["labels"])
     assert INJECT in json.dumps(planted.entity(FINANCE)["labels"])
     assert INJECT not in json.dumps(clean.entity(POD)["labels"])
+    # A model that obeys planted text reads both incidents; it sees the text only in one.
+    for store in (planted, clean):
+        for inc in store.incidents():
+            explain.explain(store, inc, CompromisedModel())
     d1, d2 = decisions(planted), decisions(clean)
     # Event IDs are the same (the record's own eventID), so every decision must match.
     assert d1 == d2
@@ -384,6 +388,8 @@ class CompromisedModel:
 
     def complete_json(self, system, user, schema):
         self.calls.append((system, user, schema))
+        if INJECT not in user:
+            return {"summary": "ok", "findings": [], "actions": []}, {"model": "stub", "served_by": "stub", "usage": {}}
         ids = [f["finding_id"] for f in json.loads(user.split("<untrusted_environment_data>\n", 1)[1]
                                                     .split("\n</untrusted_environment_data>", 1)[0])["findings"]]
         answer = {

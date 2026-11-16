@@ -178,6 +178,30 @@ def test_path_walk_never_reenters_a_node(tmp_path):
     assert found == [(SVC, POD, second), (second, POD, SVC)]
 
 
+# --- correlation keys ---------------------------------------------------------------------
+
+def test_internet_node_does_not_join_incidents():
+    from codeguardian.v2 import correlate
+
+    store = Store()
+    at = ts("2026-11-14T10:00:00Z")
+
+    def finding(fid, kind, entities):
+        f = {"finding_id": fid, "kind": kind, "rule_id": "R", "rule_version": 1, "severity": "low", "title": "t",
+             "primary_entity": entities[0], "entities": entities, "path": [], "events": [], "first_seen": at,
+             "last_seen": at, "status": "open", "frameworks": [], "notes": []}
+        store.put_finding(f)
+        return f
+
+    a = finding("a" * 32, "detection", ["net:internet:any", "k8s:pod:lab/x/a"])
+    finding("c" * 32, "path", ["net:internet:any", "k8s:pod:lab/y/c"])
+    inc_a = correlate.add_detection(store, a, at)
+    b = finding("b" * 32, "detection", ["net:internet:any", "k8s:pod:lab/x/b"])
+    inc_b = correlate.add_detection(store, b, at)
+    assert inc_a["incident_id"] != inc_b["incident_id"]
+    assert store.incident(inc_a["incident_id"])["finding_ids"] == ["a" * 32]
+
+
 # --- event parsers ----------------------------------------------------------------------------
 
 def test_parsers_normalise_three_formats():

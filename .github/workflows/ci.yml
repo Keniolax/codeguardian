@@ -23,3 +23,6 @@ jobs:
       - run: python -m pytest -v
         env:
           PYTHONPATH: src
+      - run: python tests/mutants.py
+        env:
+          PYTHONPATH: src

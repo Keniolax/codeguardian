@@ -69,23 +69,26 @@ class Pipeline:
         """IRSA: a service account assumes a role when its annotation names the role and
         the role's trust policy names the service account. Either alone is not enough."""
         delta, keep = Delta(), set()
+        roles = self.store.entities("iam_role")
         for sa in self.store.entities("service_account"):
             a = sa["attrs"]
             arn = a.get("irsa_role_arn")
-            status = None
-            if arn:
-                rid = entity_id("iam_role", arn)
-                role = self.store.entity(rid)
-                if role is None:
-                    status = "role not in model"
-                elif not trusts_service_account(role["attrs"].get("trust_subjects", []), a["namespace"], a["name"]):
-                    status = "role trust policy does not name this service account"
-                else:
-                    status = "trust verified"
-                    xid, changed = self.store.upsert_edge("assumes", sa["id"], rid, {"via": "irsa"}, "link", at)
-                    keep.add(xid)
-                    if changed:
-                        delta.edge("assumes")
+            trusting = [r for r in roles
+                        if trusts_service_account(r["attrs"].get("trust_subjects", []), a["namespace"], a["name"])]
+            linked = [r for r in trusting if r["attrs"]["arn"] == arn]
+            if not arn:
+                status = None
+            elif not any(r["attrs"]["arn"] == arn for r in roles):
+                status = "role not in model"
+            elif not linked:
+                status = "role trust policy does not name this service account"
+            else:
+                status = "trust verified"
+            for role in linked:
+                xid, changed = self.store.upsert_edge("assumes", sa["id"], role["id"], {"via": "irsa"}, "link", at)
+                keep.add(xid)
+                if changed:
+                    delta.edge("assumes")
             if self.store.set_attrs(sa["id"], {**a, "irsa_status": status}):
                 delta.entity(sa["id"], "service_account")
         for e in self.store.edges(etype="assumes"):
