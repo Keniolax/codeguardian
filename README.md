@@ -174,10 +174,10 @@ The least privilege the export needs:
 - Local only: `kubectl config current-context` reads the kubeconfig, and
   `git check-ignore` reads the repository.
 
-Measured on 2026-11-16 at commit `dd2dff1`:
+Measured on 2026-11-16, the tests at commit `48b762f` and the speed at `dd2dff1`:
 
-- 143 tests pass (25 for v1, 118 for v2). The mutation run removes 80 controls one at a
-  time and runs the tests that name each one: 102 mutant-test pairs, 89 distinct tests,
+- 146 tests pass (25 for v1, 121 for v2). The mutation run removes 84 controls one at a
+  time and runs the tests that name each one: 106 mutant-test pairs, 92 distinct tests,
   all fail without their control. One case, a pod running as a different service
   account, has no mutant of its own; that edge is absent from the input itself.
 - 10,010 events (the 10 chain records and 10,000 generated benign records, seed 7),
