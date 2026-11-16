@@ -108,7 +108,8 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   source that failed, never ran, or is past its refresh period.
 - Events (CloudTrail, Kubernetes audit, Falco) are read one at a time from a file or
   stdin and joined to the model. `PutRolePolicy` and `DeleteRolePolicy` change the model
-  at once. `AttachRolePolicy` carries only an ARN, so an unknown policy is marked.
+  at once, in whatever order the records arrive. `AttachRolePolicy` carries only an ARN,
+  so an unknown policy is marked.
 - One path finding covers the chain; removing any one of its six edges removes it.
   The runtime alerts, the cloud events and the path finding form one incident. A shell
   in another pod on the same node stays in its own incident.
@@ -143,17 +144,17 @@ tail -n 1 $F/events/chain.ndjson | .venv/bin/python -m codeguardian watch --db d
 The two recorded model answers are written by hand. `explain` and `ask` have not been run
 against a live model.
 
-Measured on 2026-11-15 at commit `616e1ce`:
+Measured on 2026-11-16 at commit `1d7d5f5`:
 
-- 109 tests pass (25 for v1, 84 for v2). The mutation run removes 52 controls one at a
-  time and runs the tests that name each one: 62 mutant-test pairs, 55 distinct tests,
+- 117 tests pass (25 for v1, 92 for v2). The mutation run removes 59 controls one at a
+  time and runs the tests that name each one: 72 mutant-test pairs, 63 distinct tests,
   all fail without their control. One case, a pod running as a different service
   account, has no mutant of its own; that edge is absent from the input itself.
 - 10,010 events (the 10 chain records and 10,000 generated benign records, seed 7),
   each processed in full and committed to an SQLite file in WAL mode with
   `synchronous=NORMAL`, so there is no fsync per commit. Apple M1, macOS 26.6.2, Python
-  3.12.14, three runs: 6,146 to 6,493 events per second; per event p50 0.10 ms, p95
-  0.35 to 0.38 ms, max 5.6, 105.0 and 8.9 ms. The chain incident held the same seven
+  3.12.14, three runs: 6,107 to 6,308 events per second; per event p50 0.10 ms, p95
+  0.39 to 0.44 ms, max 7.9, 13.2 and 6.9 ms. The chain incident held the same seven
   rules as in a run without noise, and the path finding ended resolved.
 
 The data is recorded, not live. The model holds 24 entities and 20 edges, and the noise
@@ -165,6 +166,10 @@ What was learned:
 
 - An event changes the model only as far as the record shows. A guess about a policy
   the record does not carry would read as "safe", so the role is marked instead.
+- CloudTrail delivers records out of order, so the order of changes must be kept per
+  policy. With one time per role, a `DeleteRolePolicy` that arrived first was forgotten,
+  and the late `PutRolePolicy` opened the path finding again. Deletes are now kept as
+  tombstones, and all 24 orders of four IAM records end in the same model.
 - A passing test can prove less than its name. The first test of "re-run only affected
   rules" still passed when the path rule re-ran on every change. The mutation run found
   this, and a second test now changes only types the path rule does not follow.
