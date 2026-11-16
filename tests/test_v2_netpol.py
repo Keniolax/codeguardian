@@ -146,6 +146,9 @@ def test_ipblock_of_every_address_opens_the_path_and_excepting_the_source_range_
     assert path_open(store) == []
     store = run("half", {"cidr": "203.0.113.0/24", "except": ["203.0.113.0/25"]}, outside=TEST_SOURCE)
     assert len(path_open(store)) == 1
+    # A source range inside a wider except is excepted as a whole.
+    store = run("wide", {"cidr": "0.0.0.0/0", "except": ["203.0.113.0/24"]}, outside=("203.0.113.0/26",))
+    assert path_open(store) == []
 
 
 def test_allow_on_another_port_or_protocol_does_not_open_the_path(tmp_path):
@@ -156,6 +159,22 @@ def test_allow_on_another_port_or_protocol_does_not_open_the_path(tmp_path):
     # Control: the Service's target port.
     store = chain_with(tmp_path, "control", DENY, allow("allow-port", [{"from": every, "ports": [{"port": 8080}]}]))
     assert len(path_open(store)) == 1
+    # An endPort range that ends below the target port does not open it; one that starts at it does.
+    for name, entry, stays_open in (("below", {"port": 8000, "endPort": 8070}, False),
+                                    ("starts-at", {"port": 8080, "endPort": 8090}, True)):
+        store = chain_with(tmp_path, name, DENY, allow("allow-port", [{"from": every, "ports": [entry]}]))
+        assert bool(path_open(store)) is stays_open, name
+        assert edge(store)["ingress_from_outside"] == ("allowed" if stays_open else "denied"), name
+
+
+def test_one_allowed_service_port_opens_the_path(tmp_path):
+    # The second Service port omits targetPort, so it sends to its own port, 8080.
+    ports = [{"port": 9443, "targetPort": 9090, "protocol": "TCP"}, {"port": 8080, "protocol": "TCP"}]
+    for name, allowed, stays_open in (("one", 8080, True), ("none", 7070, False)):
+        store = chain_with(tmp_path, name, DENY, allow("allow-port", [{"ports": [{"port": allowed}]}]),
+                           edit=_service_ports(ports))
+        assert bool(path_open(store)) is stays_open, name
+        assert edge(store)["ingress_from_outside"] == ("allowed" if stays_open else "denied"), name
 
 
 def test_policy_in_another_namespace_with_a_matching_selector_changes_nothing(tmp_path):
@@ -211,10 +230,34 @@ def _named(port):
     return edit
 
 
+def _two_named(port):
+    """Two containers declare a port by this name (9090 and 8080), so the name is not found once."""
+    def edit(data):
+        _named(port)(data)
+        k8s_item(data, "Pod", "sentinel-agent-7d9f")["spec"]["containers"].append(
+            {"name": "sidecar", "image": "registry.example.com/sidecar:1.0.0",
+             "ports": [{"name": port, "containerPort": 8080, "protocol": "TCP"}]})
+    return edit
+
+
 def _host_network(on):
     def edit(data):
         k8s_item(data, "Pod", "sentinel-agent-7d9f")["spec"]["hostNetwork"] = on
     return edit
+
+
+def _service_ports(ports):
+    def edit(data):
+        k8s_item(data, "Service", "sentinel-agent")["spec"]["ports"] = copy.deepcopy(ports)
+    return edit
+
+
+def _block(block):
+    return [allow("p", [{"from": [{"ipBlock": block}]}])]
+
+
+def _ports(*ports):
+    return [allow("p", [{"ports": list(ports)}])]
 
 
 EVERY = [{}]
@@ -239,6 +282,46 @@ UNHANDLED = {
                      dict(items=[allow("p", [{"from": [{"podSelector": {}}]}])]), "from entry"),
     "host-network": (dict(items=[], edit=_host_network(True)), dict(items=[], edit=_host_network(False)),
                      "host network"),
+    # Malformed or unusual input. Each guard must give "not evaluated", never a deny.
+    "bad-except": (dict(items=_block({"cidr": "203.0.113.0/24", "except": ["198.51.100.0/24"]}),
+                        outside=TEST_SOURCE),
+                   dict(items=_block({"cidr": "198.51.100.0/24"}), outside=TEST_SOURCE), "except outside its cidr"),
+    "except-not-a-list": (dict(items=_block({"cidr": "0.0.0.0/0", "except": {"203.0.113.0/24": "x"}}),
+                               outside=TEST_SOURCE),
+                          dict(items=_block({"cidr": "0.0.0.0/0", "except": ["203.0.113.0/24"]}), outside=TEST_SOURCE),
+                          "is not a list"),
+    "bad-end-port": (dict(items=_ports({"port": 8000, "endPort": "9000"})),
+                     dict(items=_ports({"port": 8000, "endPort": 8070})), "endPort '9000'"),
+    "unknown-protocol": (dict(items=_ports({"protocol": "ICMP", "port": 8080})),
+                         dict(items=_ports({"protocol": "UDP", "port": 8080})), "protocol 'ICMP'"),
+    "ipblock-with-selector": (dict(items=[allow("p", [{"from": [{"ipBlock": {"cidr": "0.0.0.0/0"},
+                                                                  "podSelector": {}}]}])]),
+                              dict(items=[allow("p", [{"from": [{"podSelector": {}}]}])]),
+                              "ipBlock together with a selector"),
+    "bad-selector": (dict(items=[allow("p", EVERY, {"matchLabels": {"app": "sentinel-agent"}, "matchFields": []})]),
+                     dict(items=[allow("p", EVERY, {"matchLabels": {"app": "report-builder"}})]), ": selector {"),
+    "bad-ingress": (dict(items=[policy("p", {"podSelector": {}, "policyTypes": ["Ingress"], "ingress": {"from": []}})]),
+                    dict(items=[policy("p", {"podSelector": {}, "policyTypes": ["Ingress"], "ingress": []})]),
+                    ": ingress {"),
+    "bad-rule": (dict(items=[allow("p", [{"from": [{"podSelector": {}}], "to": [{"podSelector": {}}]}])]),
+                 dict(items=[allow("p", [{"from": [{"podSelector": {}}]}])]), ": rule {"),
+    "no-service-ports": (dict(items=[], edit=_service_ports([])),
+                         dict(items=[], edit=_service_ports([{"port": 443, "targetPort": 8080, "protocol": "TCP"}])),
+                         "lists no ports"),
+    "unknown-service-protocol": (dict(items=[], edit=_service_ports([{"port": 443, "targetPort": 8080,
+                                                                       "protocol": "ICMP"}])),
+                                 dict(items=[], edit=_service_ports([{"port": 443, "targetPort": 8080,
+                                                                       "protocol": "UDP"}])),
+                                 "Service port protocol 'ICMP'"),
+    # No port number at all; the control omits targetPort, which then is the same as port.
+    "service-port-unknown": (dict(items=_ports({"port": 8080}),
+                                  edit=_service_ports([{"name": "https", "protocol": "TCP"}])),
+                             dict(items=_ports({"port": 8080}),
+                                  edit=_service_ports([{"port": 9090, "protocol": "TCP"}])),
+                             "has no port number"),
+    "ambiguous-named-port": (dict(items=_ports({"port": "metrics"}), edit=_two_named("metrics")),
+                             dict(items=_ports({"port": "metrics"}), edit=_named("metrics")),
+                             "named port 'metrics' not found once"),
 }
 
 
@@ -370,6 +453,10 @@ def test_rule_loader_refuses_an_edge_attr_it_does_not_know():
 
     with pytest.raises(RuleError, match="has no attr"):
         validate(rule("labels"))
+    table = rule("ingress_from_outside")
+    table["hops"][1]["edge_where"] = table["hops"][1]["edge_where"][0]  # a TOML table, not a list
+    with pytest.raises(RuleError, match="edge_where must be a list"):
+        validate(table)
     validate(rule("ingress_from_outside"))
 
 
@@ -391,9 +478,99 @@ def test_reach_prints_each_answer_and_escapes_policy_text(tmp_path, capsys):
     assert answers["outsider/outsider-2f9a"].startswith("not evaluated: ")
     for out in answers.values():
         assert "\x1b" not in out
+        assert "\n  this assumes the cluster's network plugin enforces NetworkPolicy;" in out
         assert all(line.startswith(("allowed: ", "not evaluated: ", "  note: ", "  this assumes"))
                    for line in out.splitlines()), out
     # Control: without the hostile policy the outsider is denied.
     (tmp_path / "control").mkdir()
     store = layout(tmp_path / "control")
     assert netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000)[0] == "denied"
+
+
+def test_reach_refuses_a_pod_or_port_it_cannot_name(tmp_path, capsys):
+    db = str(tmp_path / "m.db")
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", SNAPSHOT_AT, "--cluster", "course",
+                "--k8s", str(LAYOUT)]) == 0
+    base = ["reach", "--db", db, "--now", NOW, "--to", "shop/shop-web-5d8f"]
+    for ref in ("client-7c4b", "course/client/client-7c4b", "client/"):
+        with pytest.raises(SystemExit, match="give a pod as NAMESPACE/NAME"):
+            cli([*base, "--from", ref, "--port", "3000"])
+    for port in ("0", "65536", "-1"):
+        with pytest.raises(SystemExit) as exc:
+            cli([*base, "--from", "client/client-7c4b", "--port", port])
+        assert exc.value.code == 2
+        assert "is not a port number" in capsys.readouterr().err
+    # Control: a pod named as NAMESPACE/NAME and the highest port get an answer.
+    assert cli([*base, "--from", "client/client-7c4b", "--port", "65535"]) == 0
+    assert capsys.readouterr().out.startswith("denied: client/client-7c4b -> shop/shop-web-5d8f on TCP 65535\n")
+
+
+# --- found in review: pod-to-pod inputs the layout does not hold -----------------------------
+
+def _pod(name, **spec):
+    def edit(data):
+        k8s_item(data, "Pod", name)["spec"].update(spec)
+    return edit
+
+
+def test_host_network_source_pod_is_not_evaluated(tmp_path):
+    # The reference leaves NetworkPolicy for a host-network pod undefined; most plugins see the
+    # node's address, and traffic from a pod's own node is always allowed.
+    store = layout(tmp_path, edit=_pod("outsider-2f9a", hostNetwork=True))
+    answer, notes = netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000)
+    assert answer == "not evaluated"
+    assert any("source pod uses the host network" in n for n in notes)
+    (tmp_path / "control").mkdir()
+    store = layout(tmp_path / "control", edit=_pod("outsider-2f9a", hostNetwork=False))
+    assert netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000) == ("denied", [])
+
+
+def test_policy_whose_rules_the_model_does_not_hold_is_not_evaluated(tmp_path):
+    # A model written before ingress rules were collected holds a policy's selector only.
+    store = layout(tmp_path, edit=lambda d: d.update(items=[i for i in d["items"] if i["kind"] != "NetworkPolicy"]))
+    pid = "k8s:network_policy:course/shop/older"
+    older = {"name": "older", "namespace": "shop", "pod_selector": {}}
+    store.upsert_entity(pid, "network_policy", older, {}, "k8s.state", SNAPSHOT_AT)
+    answer, notes = netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000)
+    assert answer == "not evaluated"
+    assert any("ingress rules not in the model" in n for n in notes)
+    # Control: the same policy with its rules read and none found is a default deny.
+    store.upsert_entity(pid, "network_policy", {**older, "policy_types": None, "ingress": None, "egress_rules": 0},
+                        {}, "k8s.state", SNAPSHOT_AT)
+    assert netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000) == ("denied", [])
+
+
+def test_egress_policy_counts_only_when_it_may_select_the_source_pod(tmp_path):
+    def odd(egress, ns="client"):
+        return policy("odd-egress", {"podSelector": {}, "egress": egress}, ns=ns)
+
+    # An egress field that is not a list, on a policy with no policyTypes: not known.
+    store = layout(tmp_path, edit=adding(odd({"to": []})))
+    answer, notes = netpol.pod_to_pod(store, CLIENT, SHOP, 3000)
+    assert answer == "not evaluated"
+    assert any("egress rules not known" in n for n in notes)
+    # Controls: no egress field, and an egress policy in another namespace.
+    for name, item in (("none", odd(None)), ("elsewhere", odd([{"to": []}], ns="outsider"))):
+        (tmp_path / name).mkdir()
+        store = layout(tmp_path / name, edit=adding(item))
+        assert netpol.pod_to_pod(store, CLIENT, SHOP, 3000) == ("allowed", []), name
+
+
+def test_ipblock_against_a_pod_is_not_evaluated(tmp_path):
+    store = layout(tmp_path, edit=_from([{"ipBlock": {"cidr": "0.0.0.0/0"}}]))
+    answer, notes = netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000)
+    assert answer == "not evaluated"
+    assert any("ipBlock against a pod" in n for n in notes)
+    # Control: the same rule by namespace label, which the outsider lacks.
+    (tmp_path / "control").mkdir()
+    store = layout(tmp_path / "control", edit=_from([{"namespaceSelector": {"matchLabels": {"access": "shop"}}}]))
+    assert netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000) == ("denied", [])
+
+
+def test_pods_in_different_clusters_are_not_compared(tmp_path):
+    store = layout(tmp_path)
+    other = "k8s:pod:other/client/client-7c4b"
+    store.upsert_entity(other, "pod", store.entity(CLIENT)["attrs"], {}, "k8s.state", SNAPSHOT_AT)
+    assert netpol.pod_to_pod(store, other, SHOP, 3000) == ("not evaluated", ["the pods are in different clusters"])
+    # Control: the same pod in the shop's cluster.
+    assert netpol.pod_to_pod(store, CLIENT, SHOP, 3000) == ("allowed", [])

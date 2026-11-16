@@ -57,7 +57,7 @@ def add_subcommands(sub):
     p = common(sub.add_parser("reach", help="whether NetworkPolicy lets one pod connect to another"))
     p.add_argument("--from", dest="src", required=True, metavar="NAMESPACE/POD", help="the pod that connects")
     p.add_argument("--to", dest="dst", required=True, metavar="NAMESPACE/POD", help="the pod it connects to")
-    p.add_argument("--port", type=int, required=True, help="the port on the destination pod")
+    p.add_argument("--port", type=_port_number, required=True, help="the port on the destination pod (1 to 65535)")
     p.add_argument("--protocol", default="TCP", choices=["TCP", "UDP", "SCTP"])
 
     p = sub.add_parser("bench", help="replay the chain mixed with seeded noise and time each event")
@@ -200,6 +200,15 @@ def _ingest(a, store, pipe, clock):
         return 2
     print(f"opened {opened}, resolved {resolved} findings")
     return 0
+
+
+def _port_number(text):
+    import argparse
+
+    value = int(text)
+    if not 1 <= value <= 65535:
+        raise argparse.ArgumentTypeError(f"{value} is not a port number (1 to 65535)")
+    return value
 
 
 def _reach(a, store, pipe):

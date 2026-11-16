@@ -115,14 +115,18 @@ def outside(cidrs=OUTSIDE):
 
 def pod_source(pod, namespace_labels):
     return {"kind": "pod", "namespace": pod["namespace"], "labels": pod.get("pod_labels") or {},
-            "namespace_labels": namespace_labels}
+            "namespace_labels": namespace_labels, "host_network": pod.get("host_network") is True}
 
 
 def _ipblock(block, source, what, notes):
     if not isinstance(block, dict) or set(block) - {"cidr", "except"}:
         notes.add(f"{what}: ipBlock {_clip(block)} not evaluated")
         return None
-    raw = [block.get("cidr"), *(block.get("except") or [])]
+    excepts = block.get("except") or []
+    if not isinstance(excepts, list):
+        notes.add(f"{what}: ipBlock except {_clip(excepts)} is not a list; not evaluated")
+        return None
+    raw = [block.get("cidr"), *excepts]
     try:
         if not all(isinstance(c, str) for c in raw):
             raise TypeError("a CIDR must be a string")
@@ -241,7 +245,12 @@ def _rule(rule, policy_ns, source, target, protocol, pod, what, notes):
 def _types(policy, direction, what, notes):
     types = policy.get("policy_types")
     if types is None or types == []:
-        return True if direction == "Ingress" else bool(policy.get("egress_rules"))
+        if direction == "Ingress":
+            return True
+        if not isinstance(policy.get("egress_rules"), int):
+            notes.add(f"{what}: egress rules not known; policyTypes not evaluated")
+            return None
+        return policy["egress_rules"] > 0
     if not isinstance(types, list) or any(t not in ("Ingress", "Egress") for t in types):
         notes.add(f"{what}: policyTypes {_clip(types)} not evaluated")
         return None
@@ -269,7 +278,11 @@ def ingress(policies, pod, source, target, protocol="TCP"):
         rules = p.get("ingress")
         if rules is None:
             rules = []
-        if not isinstance(rules, list):
+        if "ingress" not in p:
+            # A model written before ingress rules were collected. Missing is not "no rules".
+            notes.add(f"{what}: ingress rules not in the model; not evaluated")
+            matched = None
+        elif not isinstance(rules, list):
             notes.add(f"{what}: ingress {_clip(rules)} not evaluated")
             matched = None
         else:
@@ -279,6 +292,12 @@ def ingress(policies, pod, source, target, protocol="TCP"):
     answer = _or(_not(_or(*isolated)), *allows)
     if answer is False and pod.get("host_network"):
         notes.add("the pod uses the host network; NetworkPolicy behaviour for it is not defined; not evaluated")
+        answer = None
+    if answer is False and source.get("host_network"):
+        # The reference: a plugin may not tell a host-network pod from its node, and traffic
+        # from the node a pod runs on is always allowed.
+        notes.add("the source pod uses the host network; NetworkPolicy behaviour for it is not defined;"
+                  " not evaluated")
         answer = None
     return answer, sorted(applying), notes
 
@@ -298,13 +317,18 @@ def service_ingress(policies, pod, service_ports, source):
             notes.add(f"Service port protocol {_clip(protocol)} not evaluated")
             answers.append(None)
             continue
-        target = sp.get("targetPort", sp.get("port"))
+        target = sp.get("targetPort")
+        if target is None:
+            target = sp.get("port")  # an omitted targetPort is the same as port
         if isinstance(target, str):
             number = named_port(pod, target, protocol)
             if number is None:
                 notes.add(f"Service targetPort {_clip(target)} not found once on the pod; port not known")
             target = number
-        if not isinstance(target, int) or isinstance(target, bool):
+        elif target is None:
+            notes.add(f"Service port {_clip(sp)} has no port number; port not known")
+        if target is not None and (not isinstance(target, int) or isinstance(target, bool)):
+            notes.add(f"Service port {_clip(sp)} has no port number; port not known")
             target = None
         answer, names, more = ingress(policies, pod, source, target, protocol)
         answers.append(answer)
