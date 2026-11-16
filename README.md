@@ -144,17 +144,46 @@ tail -n 1 $F/events/chain.ndjson | .venv/bin/python -m codeguardian watch --db d
 The two recorded model answers are written by hand. `explain` and `ask` have not been run
 against a live model.
 
-Measured on 2026-11-16 at commit `1d7d5f5`:
+To take a snapshot of your own account or cluster, use the export scripts. They run the
+`aws` and `kubectl` CLIs you already have, with read calls only, and write the files the
+collectors read, with mode 0600, plus a manifest. They refuse to write inside a git work
+tree unless git ignores the path (`exports/` is ignored here). Then ingest takes the time
+and the cluster name from the manifests:
 
-- 117 tests pass (25 for v1, 92 for v2). The mutation run removes 59 controls one at a
-  time and runs the tests that name each one: 72 mutant-test pairs, 63 distinct tests,
+```
+.venv/bin/python -m codeguardian.export aws --out exports/aws
+.venv/bin/python -m codeguardian.export k8s --out exports/k8s --cluster-name lab
+.venv/bin/python -m codeguardian ingest --db real.db --aws-export exports/aws \
+  --k8s-export exports/k8s --ai my-inventory.json
+```
+
+The cluster name must match the one in your AI inventory. A bucket whose tags cannot be
+read (access denied, throttling, a timeout) is kept as "not evaluated", and a failed
+IAM, bucket-list or kubectl call stops the export. The k8s export drops env values and
+the last-applied annotation, which can hold secrets. The scripts have been tested only
+against recorded CLI output from fake `aws` and `kubectl` programs. They have not been
+run on a real account or cluster.
+
+The least privilege the export needs:
+
+- AWS: `iam:GetAccountAuthorizationDetails`, `s3:ListAllMyBuckets`, `s3:GetBucketTagging`.
+- Kubernetes: `list` on `pods`, `services` and `serviceaccounts` (core group) and on
+  `networkpolicies` (`networking.k8s.io`), in all namespaces. kubectl also reads API
+  discovery, which every authenticated user may do by default.
+- Local only: `kubectl config current-context` reads the kubeconfig, and
+  `git check-ignore` reads the repository.
+
+Measured on 2026-11-16 at commit `dd2dff1`:
+
+- 143 tests pass (25 for v1, 118 for v2). The mutation run removes 80 controls one at a
+  time and runs the tests that name each one: 102 mutant-test pairs, 89 distinct tests,
   all fail without their control. One case, a pod running as a different service
   account, has no mutant of its own; that edge is absent from the input itself.
 - 10,010 events (the 10 chain records and 10,000 generated benign records, seed 7),
   each processed in full and committed to an SQLite file in WAL mode with
   `synchronous=NORMAL`, so there is no fsync per commit. Apple M1, macOS 26.6.2, Python
-  3.12.14, three runs: 6,107 to 6,308 events per second; per event p50 0.10 ms, p95
-  0.39 to 0.44 ms, max 7.9, 13.2 and 6.9 ms. The chain incident held the same seven
+  3.12.14, three runs: 5,969 to 6,527 events per second; per event p50 0.10 to 0.11 ms,
+  p95 0.38 to 0.45 ms, max 6.6, 11.4 and 7.1 ms. The chain incident held the same seven
   rules as in a run without noise, and the path finding ended resolved.
 
 The data is recorded, not live. The model holds 24 entities and 20 edges, and the noise
