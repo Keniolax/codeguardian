@@ -18,9 +18,12 @@ ENTITY_TYPES = {
                                      "admin_wildcard", "unknown_policy_documents", "not_evaluated",
                                      "trust_subjects", "permissions_boundary", "policy_changes", "change_markers")),
     "iam_policy": ("aws", "identity", ("name", "arn", "document")),
-    "service": ("k8s", "kubernetes", ("name", "namespace", "service_type", "selector", "internet_facing")),
-    "pod": ("k8s", "kubernetes", ("name", "namespace", "service_account", "privileged", "node", "pod_labels")),
-    "network_policy": ("k8s", "kubernetes", ("name", "namespace", "pod_selector")),
+    "service": ("k8s", "kubernetes", ("name", "namespace", "service_type", "selector", "internet_facing", "ports")),
+    "pod": ("k8s", "kubernetes", ("name", "namespace", "service_account", "privileged", "node", "pod_labels",
+                                  "container_ports", "host_network")),
+    "network_policy": ("k8s", "kubernetes", ("name", "namespace", "pod_selector", "policy_types", "ingress",
+                                             "egress_rules")),
+    "namespace": ("k8s", "kubernetes", ("name", "namespace_labels")),
     "service_account": ("k8s", "identity", ("name", "namespace", "irsa_role_arn", "irsa_status")),
     "agent": ("ai", "ai", ("name",)),
     "model_endpoint": ("ai", "ai", ("endpoint",)),
@@ -29,6 +32,12 @@ ENTITY_TYPES = {
 
 EDGE_TYPES = ("contains", "runs_as", "assumes", "has_permission", "exposes", "reachable_from",
               "uses_model", "can_call", "holds", "reads", "deploys_to", "protects")
+
+# edge type -> typed attrs a path rule may name in edge_where. exposes carries the
+# NetworkPolicy answer for a connection from outside the cluster (see netpol.py).
+EDGE_ATTRS = {
+    "exposes": ("ingress_from_outside",),
+}
 
 EVENT_SOURCES = {
     "aws.cloudtrail": "cloud",

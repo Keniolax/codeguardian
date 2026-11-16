@@ -26,7 +26,8 @@ from pathlib import Path
 
 from ..v2.collectors.manifest import FILES, FORMAT, MANIFEST, sha256
 
-K8S_KINDS = "pods,services,serviceaccounts,networkpolicies"
+# Namespaces are cluster-scoped; their labels decide a NetworkPolicy namespaceSelector.
+K8S_KINDS = "pods,services,serviceaccounts,networkpolicies,namespaces"
 
 # Command prefixes run() accepts. Each is a read: AWS operations named get- or list-,
 # `kubectl get`, `kubectl config current-context` (reads the local kubeconfig only), and

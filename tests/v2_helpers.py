@@ -53,7 +53,7 @@ def iam_event(name):
 
 
 def build(tmp_path, iam="aws/iam-wide.json", edit_iam=None, edit_k8s=None, edit_ai=None, edit_tags=None,
-          db=":memory:"):
+          db=":memory:", **pipeline_args):
     """A pipeline whose model holds the fixture snapshot, after optional edits to copies."""
     files = {}
     for key, rel, edit in (("iam", iam, edit_iam), ("k8s", "k8s/state.json", edit_k8s),
@@ -66,7 +66,7 @@ def build(tmp_path, iam="aws/iam-wide.json", edit_iam=None, edit_k8s=None, edit_
         files[key] = path
     store = Store(db)
     clock = FixedClock(NOW)
-    pipe = Pipeline(store, load_rules(), clock)
+    pipe = Pipeline(store, load_rules(), clock, **pipeline_args)
     pipe.snapshot(aws=(files["iam"], FX / "aws" / "s3-buckets.json", files["tags"]), k8s=files["k8s"],
                   ai=files["ai"], at=SNAPSHOT_AT)
     return store, pipe

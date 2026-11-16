@@ -9,7 +9,7 @@ finding.
 import tomllib
 from pathlib import Path
 
-from .schema import EDGE_TYPES, ENTITY_TYPES, EVENT_SOURCES, OUTCOMES, SEVERITIES
+from .schema import EDGE_ATTRS, EDGE_TYPES, ENTITY_TYPES, EVENT_SOURCES, OUTCOMES, SEVERITIES
 
 RULES_DIR = Path(__file__).parent / "rules"
 MAX_HOPS = 10
@@ -37,12 +37,14 @@ def _keys(obj, allowed, rule, where):
     _need(not extra, rule, f"unknown key(s) {sorted(extra)} in {where}")
 
 
-def _cond(c, rule, etype=None):
+def _cond(c, rule, etype=None, edge=None):
     _keys(c, ("attr", "op", "value"), rule, "condition")
     _need(_is(c.get("op"), OPS), rule, f"unknown op {c.get('op')!r}")
     _need(isinstance(c.get("attr"), str), rule, "condition needs attr")
     if etype is not None:
         _need(_is(c["attr"], ENTITY_TYPES[etype][2]), rule, f"entity type {etype} has no attr {c['attr']!r}")
+    if edge is not None:
+        _need(_is(c["attr"], EDGE_ATTRS.get(edge, ())), rule, f"edge type {edge} has no attr {c['attr']!r}")
     if c["op"] not in ("nonempty", "empty"):
         _need("value" in c, rule, f"op {c['op']} needs a value")
     if c["op"] == "in":
@@ -80,11 +82,14 @@ def validate(rule):
         _need(isinstance(rule.get("hops"), list) and rule["hops"], rule, "hops must be a non-empty list")
         _need(len(rule["hops"]) <= MAX_HOPS, rule, f"{len(rule['hops'])} hops; the limit is {MAX_HOPS}")
         for h in rule["hops"]:
-            _keys(h, ("edge", "dir", "to", "where", "edge_allows", "require"), rule, "hop")
+            _keys(h, ("edge", "dir", "to", "where", "edge_where", "edge_allows", "require"), rule, "hop")
             _step({k: h[k] for k in ("edge", "dir", "to") if k in h}, rule)
             _need("to" in h, rule, "every hop needs a to type")
             for c in h.get("where", []):
                 _cond(c, rule, h["to"])
+            _need(isinstance(h.get("edge_where", []), list), rule, "edge_where must be a list")
+            for c in h.get("edge_where", []):
+                _cond(c, rule, edge=h["edge"])
             if "edge_allows" in h:
                 _need(h["edge"] == "has_permission", rule, "edge_allows applies only to has_permission")
                 _need(isinstance(h["edge_allows"], list) and h["edge_allows"], rule, "edge_allows must be a list")

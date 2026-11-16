@@ -7,7 +7,8 @@ each named test on its own, and restores the file. A mutant counts as caught onl
 pytest exits with code 1 (tests failed). Exit code 2 or more means the mutant broke
 collection or imports, which proves nothing, so it is reported as broken. The run fails
 if any mutant survives or breaks, if the tree is not clean afterwards, or if a test whose
-name starts with test_a_ to test_f_ has no mutant.
+name starts with test_a_ to test_f_, or any test in the export or NetworkPolicy files, has no
+mutant. In the NetworkPolicy file every parametrized case must also have a mutant of its own.
 """
 
 import ast
@@ -24,10 +25,25 @@ CORE = "tests/test_v2_core.py"
 ASK = "tests/test_v2_ask.py"
 EXP = "tests/test_v2_export.py"
 EXPORT = "src/codeguardian/export/__init__.py"
+NET = "tests/test_v2_netpol.py"
+NP = V2 + "netpol.py"
+K8S = V2 + "collectors/k8s.py"
 
 
 def T(name, file=CHAIN):
     return f"{file}::{name}"
+
+
+DENY_TEST = "test_default_deny_removes_the_path_and_removing_it_brings_back_the_same_finding"
+DENY_FORMS = ("empty-ingress-list", "empty-selector", "label-selector", "no-policy-types")
+UNHANDLED_TEST = "test_construct_that_is_not_handled_keeps_the_path_open_with_a_note"
+UNHANDLED = ("bad-cidr", "end-port", "host-network", "named-port", "unknown-operator", "unknown-peer",
+             "unknown-policy-type")
+EXPR_TEST = "test_match_expressions_select_pods_as_the_reference_says"
+IPBLOCK_TEST = "test_ipblock_of_every_address_opens_the_path_and_excepting_the_source_range_closes_it"
+PORT_TEST = "test_allow_on_another_port_or_protocol_does_not_open_the_path"
+LAYOUT_TEST = "test_course_layout_client_reaches_the_shop_and_outsider_and_internet_do_not"
+PEER_TEST = "test_pod_selector_alone_means_the_policy_namespace_and_both_selectors_must_match"
 
 
 MUTANTS = [
@@ -206,7 +222,8 @@ MUTANTS = [
      [T("test_f_plan_is_a_catalog_dry_run_with_exact_text")]),
     ("renderer does not escape", V2 + "render.py",
      "from ..render import safe\n", "def safe(text, limit=1500):\n    return str(text)[:limit]\n",
-     [T("test_f_rendered_output_escapes_planted_and_model_text")]),
+     [T("test_f_rendered_output_escapes_planted_and_model_text"),
+      T("test_policy_names_and_selector_text_cannot_change_a_finding_or_forge_a_line", NET)]),
     ("a code path that runs a command", V2 + "respond.py",
      "import re\nimport shlex\n", "import re\nimport shlex\nimport subprocess\n",
      [T("test_f_no_code_path_executes_anything")]),
@@ -348,6 +365,138 @@ MUTANTS = [
      '                    if conditional:\n                        g["not_evaluated"].add(f"Condition in {where} not evaluated")',
      '                    pass',
      [T("test_resolver_marks_condition_deny_notaction_and_boundary", CORE)]),
+    # NetworkPolicy (slice netpol): each check, and each "not evaluated" that must not read as a deny.
+    ("a pod no policy selects is treated as isolated", NP,
+     "    answer = _or(_not(_or(*isolated)), *allows)", "    answer = _or(*allows)",
+     [T("test_chain_without_a_policy_keeps_its_one_path_finding", NET)]),
+    ("exposes edge ignores NetworkPolicy", K8S,
+     "                answer, names, notes = netpol.service_ingress(netpols, pattrs, ports, source)",
+     "                answer, names, notes = True, [], set()",
+     [T(f"{DENY_TEST}[{form}]", NET) for form in DENY_FORMS]),
+    ("path rule ignores the edge condition", V2 + "paths.py",
+     '    if not all(R.check(c, edge["attrs"]) for c in hop.get("edge_where", [])):\n        return False\n', "",
+     [T(f"{DENY_TEST}[empty-selector]", NET)]),
+    ("PATH-AI-001 drops its NetworkPolicy condition", V2 + "rules/paths.toml",
+     '# keeps the path open.\nedge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]\n',
+     "# keeps the path open.\n",
+     [T(f"{DENY_TEST}[empty-selector]", NET),
+      T("test_allow_for_a_namespace_label_does_not_open_the_path_from_the_internet", NET)]),
+    ("not evaluated closes the path as a deny would", V2 + "rules/paths.toml",
+     '# keeps the path open.\nedge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]',
+     '# keeps the path open.\nedge_where = [{ attr = "ingress_from_outside", op = "eq", value = "allowed" }]',
+     [T(f"{UNHANDLED_TEST}[{case}]", NET) for case in UNHANDLED]),
+    ("an empty podSelector selects nothing", NP,
+     "    if not match and not exprs:\n        return True", "    if not match and not exprs:\n        return False",
+     [T(f"{DENY_TEST}[empty-selector]", NET)]),
+    ("matchLabels never match", NP, "            results.append(labels.get(key) == value)",
+     "            results.append(False)", [T(f"{DENY_TEST}[label-selector]", NET)]),
+    ("matchLabels always match", NP, "            results.append(labels.get(key) == value)",
+     "            results.append(True)", [T("test_policy_that_selects_another_pod_changes_nothing", NET)]),
+    ("a policy with no policyTypes does not cover ingress", NP,
+     '        return True if direction == "Ingress" else bool(policy.get("egress_rules"))',
+     '        return False if direction == "Ingress" else bool(policy.get("egress_rules"))',
+     [T(f"{DENY_TEST}[no-policy-types]", NET)]),
+    ("an empty ingress list allows everything", NP,
+     '            matched = _or(*[_rule(r, p["namespace"], source, target, protocol, pod, what, notes) for r in rules])',
+     '            matched = _or(*[_rule(r, p["namespace"], source, target, protocol, pod, what, notes) for r in rules])'
+     " if rules else True",
+     [T(f"{DENY_TEST}[empty-ingress-list]", NET)]),
+    ("pod and namespace selectors match outside traffic", NP,
+     "        return False  # these select pods; an outside address is not a pod",
+     "        return True  # these select pods; an outside address is not a pod",
+     [T("test_allow_for_a_namespace_label_does_not_open_the_path_from_the_internet", NET)]),
+    ("ipBlock except ignored", NP, "        inside = [e for e in excepts if e.overlaps(part)]", "        inside = []",
+     [T(IPBLOCK_TEST, NET)]),
+    ("ipBlock matches a source range it does not hold", NP,
+     "        if s.version != net.version or not s.overlaps(net):\n            continue",
+     "        if s.version != net.version:\n            continue", [T(IPBLOCK_TEST, NET)]),
+    ("excepts checked one at a time, not together", NP,
+     "        if list(ipaddress.collapse_addresses(inside)) != [part]:", "        if True:", [T(IPBLOCK_TEST, NET)]),
+    ("outside range not passed to the collector", V2 + "pipeline.py",
+     "k8s_collector.load(k8s), self.cluster, at,\n                                                     self.outside)))",
+     "k8s_collector.load(k8s), self.cluster, at)))", [T(IPBLOCK_TEST, NET)]),
+    ("rule ports not checked", NP,
+     "    port_ok = _or(*[_port(p, target, protocol, pod, what, notes) for p in ports]) if ports else True",
+     "    port_ok = True", [T(PORT_TEST, NET), T(LAYOUT_TEST, NET)]),
+    ("rule protocol not checked", NP,
+     '    if (entry.get("protocol") or "TCP") != protocol:\n        return False', "    if False:\n        return False",
+     [T(PORT_TEST, NET), T(LAYOUT_TEST, NET)]),
+    ("policy namespace not checked", NP,
+     '    isolated, allows = [], []\n    for p in policies:\n        if p.get("namespace") != pod["namespace"]:',
+     "    isolated, allows = [], []\n    for p in policies:\n        if False:",
+     [T("test_policy_in_another_namespace_with_a_matching_selector_changes_nothing", NET)]),
+    ("policyTypes ignored", NP, "    return direction in types", "    return True",
+     [T("test_egress_only_policy_does_not_isolate_the_pod_for_ingress", NET)]),
+    ("In read as NotIn", NP, '        return found if op == "In" else not found', "        return not found",
+     [T(f"{EXPR_TEST}[in-selects]", NET), T(f"{EXPR_TEST}[in-other]", NET)]),
+    ("NotIn read as In", NP, '        return found if op == "In" else not found', "        return found",
+     [T(f"{EXPR_TEST}[notin-selects]", NET), T(f"{EXPR_TEST}[notin-other]", NET)]),
+    ("NotIn requires the key to be present", NP, '        return found if op == "In" else not found',
+     '        return found if op == "In" else (key in labels and not found)',
+     [T(f"{EXPR_TEST}[notin-absent-key]", NET)]),
+    ("Exists and DoesNotExist swapped", NP, '        return (key in labels) == (op == "Exists")',
+     '        return (key in labels) != (op == "Exists")',
+     [T(f"{EXPR_TEST}[exists]", NET), T(f"{EXPR_TEST}[doesnotexist]", NET)]),
+    ("endPort range read as a deny", NP,
+     'depends on the network plugin; not evaluated")\n        return None',
+     'depends on the network plugin; not evaluated")\n        return False', [T(f"{UNHANDLED_TEST}[end-port]", NET)]),
+    ("named port that cannot be resolved read as a deny", NP,
+     'not found once on the pod; not evaluated")\n            return None',
+     'not found once on the pod; not evaluated")\n            return False', [T(f"{UNHANDLED_TEST}[named-port]", NET)]),
+    ("unknown operator read as no match", NP,
+     'with {len(values)} values not evaluated")\n    return None',
+     'with {len(values)} values not evaluated")\n    return False', [T(f"{UNHANDLED_TEST}[unknown-operator]", NET)]),
+    ("unknown policyTypes read as not applying", NP,
+     'notes.add(f"{what}: policyTypes {_clip(types)} not evaluated")\n        return None',
+     'notes.add(f"{what}: policyTypes {_clip(types)} not evaluated")\n        return False',
+     [T(f"{UNHANDLED_TEST}[unknown-policy-type]", NET)]),
+    ("invalid ipBlock read as no match", NP,
+     'is not a valid CIDR; not evaluated")\n        return None',
+     'is not a valid CIDR; not evaluated")\n        return False', [T(f"{UNHANDLED_TEST}[bad-cidr]", NET)]),
+    ("unknown from entry read as no match", NP,
+     '    if not peer or set(peer) - PEER_KEYS:\n        notes.add(f"{what}: from entry {_clip(peer)} not evaluated")\n'
+     "        return None",
+     '    if not peer or set(peer) - PEER_KEYS:\n        notes.add(f"{what}: from entry {_clip(peer)} not evaluated")\n'
+     "        return False", [T(f"{UNHANDLED_TEST}[unknown-peer]", NET)]),
+    ("host-network pod read as denied", NP, '    if answer is False and pod.get("host_network"):', "    if False:",
+     [T(f"{UNHANDLED_TEST}[host-network]", NET)]),
+    ("namespace entities not written", K8S,
+     '        if item["kind"] == NAMESPACE:\n            md = item["metadata"]', '        if False:\n            md = item["metadata"]',
+     [T(LAYOUT_TEST, NET), T("test_k8s_export_lists_namespaces_and_ingest_keeps_their_labels", EXP)]),
+    ("namespaceSelector ignored", NP,
+     '        ns_ok = selects(peer["namespaceSelector"], source["namespace_labels"], f"{what} namespaceSelector", notes)',
+     "        ns_ok = True", [T(LAYOUT_TEST, NET)]),
+    ("named Service targetPort not resolved", NP,
+     "            number = named_port(pod, target, protocol)\n            if number is None:\n"
+     '                notes.add(f"Service targetPort',
+     "            number = None\n            if number is None:\n"
+     '                notes.add(f"Service targetPort', [T(LAYOUT_TEST, NET)]),
+    ("a podSelector alone matches pods in every namespace", NP, '        ns_ok = source["namespace"] == policy_ns',
+     "        ns_ok = True", [T(PEER_TEST, NET)]),
+    ("namespaceSelector and podSelector in one entry ORed", NP, "    return _and(ns_ok, pod_ok)",
+     "    return _or(ns_ok, pod_ok)", [T(PEER_TEST, NET)]),
+    ("labels that are not known read as no match", NP,
+     '        notes.add(f"{what}: labels not known; selector not evaluated")\n        return None',
+     '        notes.add(f"{what}: labels not known; selector not evaluated")\n        return False',
+     [T("test_namespace_labels_that_are_not_in_the_snapshot_read_as_not_evaluated", NET)]),
+    ("egress policy on the source pod ignored", NP,
+     '    egress_ok = True if _egress_selects(policies, src["attrs"], notes) is False else None',
+     "    egress_ok = True", [T("test_egress_policy_on_the_source_pod_is_not_evaluated", NET)]),
+    ("labels that are not a map accepted", K8S,
+     "                need(isinstance(md.get(key) or {}, dict), \"k8s\", f\"{item['kind']} {md['name']!r} has bad {key}\")\n",
+     "                pass\n", [T("test_labels_that_are_not_a_map_fail_the_snapshot_loudly", NET)]),
+    ("--outside-source ignored", V2 + "cli.py", "        pipe.outside = tuple(a.outside_source)", "        pass",
+     [T("test_ingest_takes_the_outside_range_from_the_command_line", NET)]),
+    ("--outside-source not checked", V2 + "cli.py",
+     '                raise SystemExit(f"--outside-source {term(cidr)} is not an address range") from None',
+     "                pass", [T("test_ingest_takes_the_outside_range_from_the_command_line", NET)]),
+    ("edge attrs not checked by the rule loader", V2 + "rules.py",
+     "        _need(_is(c[\"attr\"], EDGE_ATTRS.get(edge, ())), rule, f\"edge type {edge} has no attr {c['attr']!r}\")",
+     "        pass", [T("test_rule_loader_refuses_an_edge_attr_it_does_not_know", NET)]),
+    ("export does not list namespaces", EXPORT,
+     'K8S_KINDS = "pods,services,serviceaccounts,networkpolicies,namespaces"',
+     'K8S_KINDS = "pods,services,serviceaccounts,networkpolicies"',
+     [T("test_k8s_export_lists_namespaces_and_ingest_keeps_their_labels", EXP)]),
 ]
 
 
@@ -360,7 +509,8 @@ def pytest(node):
 def chain_tests():
     """Tests that must each have a mutant: A to F in the chain file, and every export test."""
     out = []
-    for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True)):
+    for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True),
+                       (NET, lambda n: True)):
         tree = ast.parse((ROOT / file).read_text())
         out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name.startswith("test_") and keep(n.name)]
@@ -385,11 +535,13 @@ def main():
         return 1
     named = {node for *_, tests in MUTANTS for node in tests}
     env = dict(os.environ, PYTHONPATH="src", PYTHONDONTWRITEBYTECODE="1")
-    collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN],
-                               cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
-    loose = [n for n in collected if "[" in n and n.startswith(CHAIN) and n not in named]
+    collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN,
+                                NET], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
+    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET)) and n not in named]
     for n in loose:
-        print(f"parametrized case with no mutant of its own: {n.split('::', 1)[1]}")
+        print(f"parametrized case with no mutant of its own: {n}")
+    if any(n.startswith(NET) for n in loose):
+        return 1
     nodes = sorted(named)
     baseline = [n for n in nodes if pytest(n) != 0]
     if baseline:
@@ -416,7 +568,7 @@ def main():
         print(f"{verdict:<10} {name:<{width}}  {node}")
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
-          f"{len(results) - caught} not caught; {len(chain_tests())} A-F and export tests, all covered")
+          f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export and NetworkPolicy tests, all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")
         return 1

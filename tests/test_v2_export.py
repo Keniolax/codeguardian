@@ -36,7 +36,7 @@ sys.stdout.write(r.get("stdout", ""))
 sys.stderr.write(r.get("stderr", ""))
 sys.exit(r.get("code", 0))
 """
-KUBECTL_GET = "kubectl get pods,services,serviceaccounts,networkpolicies -A -o json --context lab"
+KUBECTL_GET = "kubectl get pods,services,serviceaccounts,networkpolicies,namespaces -A -o json --context lab"
 IAM = "aws iam get-account-authorization-details --output json"
 
 
@@ -307,6 +307,18 @@ def test_k8s_export_keeps_no_env_values_or_last_applied_config(tmp_path, fake_cl
     assert run_export("k8s", tmp_path / "k") == 0
     text = (tmp_path / "k" / "k8s.json").read_text()
     assert "example-not-a-secret" not in text and "DB_PASSWORD" in text
+
+
+def test_k8s_export_lists_namespaces_and_ingest_keeps_their_labels(tmp_path, fake_cli, capsys):
+    # A namespaceSelector reads namespace labels, so the one kubectl call lists namespaces too.
+    fake_cli(recorded_plan())
+    assert run_export("k8s", tmp_path / "k") == 0
+    assert fake_cli.log()[-1][:3] == ["kubectl", "get", "pods,services,serviceaccounts,networkpolicies,namespaces"]
+    db = tmp_path / "m.db"
+    assert ingest(db, "--k8s-export", str(tmp_path / "k")) == 0
+    capsys.readouterr()
+    ns = Store(str(db)).entity("k8s:namespace:lab/agents")
+    assert ns["attrs"]["namespace_labels"] == {"kubernetes.io/metadata.name": "agents"}
 
 
 def test_cluster_name_comes_from_the_manifest(tmp_path, fake_cli):

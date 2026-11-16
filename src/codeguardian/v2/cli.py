@@ -23,7 +23,11 @@ def add_subcommands(sub):
     p.add_argument("--aws-iam", help="aws iam get-account-authorization-details output")
     p.add_argument("--aws-buckets", help="aws s3api list-buckets output")
     p.add_argument("--aws-tags", help="bucket name -> get-bucket-tagging output")
-    p.add_argument("--k8s", help="kubectl get pods,services,serviceaccounts,networkpolicies -A -o json output")
+    p.add_argument("--k8s", help="kubectl get pods,services,serviceaccounts,networkpolicies,namespaces -A -o json"
+                                 " output")
+    p.add_argument("--outside-source", action="append", metavar="CIDR",
+                   help="an address range that a connection from outside the cluster may come from, as the pods"
+                        " see it; repeat for more; default: every IPv4 and IPv6 address")
     p.add_argument("--ai", help="declared AI inventory")
     p.add_argument("--at", help="time the snapshot was taken (RFC 3339); default: now")
     p.add_argument("--aws-export", help="directory written by `python -m codeguardian.export aws`;"
@@ -126,8 +130,18 @@ def run(a):
 
 
 def _ingest(a, store, pipe, clock):
+    import ipaddress
+
     from .collectors import CollectorError, manifest
     from .render import term
+
+    if a.outside_source:
+        for cidr in a.outside_source:
+            try:
+                ipaddress.ip_network(cidr, strict=False)
+            except ValueError:
+                raise SystemExit(f"--outside-source {term(cidr)} is not an address range") from None
+        pipe.outside = tuple(a.outside_source)
 
     aws = (a.aws_iam, a.aws_buckets, a.aws_tags)
     if any(aws) and not all(aws):

@@ -12,6 +12,8 @@ from .schema import finding_id
 
 
 def _edge_ok(hop, edge):
+    if not all(R.check(c, edge["attrs"]) for c in hop.get("edge_where", [])):
+        return False
     allows = hop.get("edge_allows")
     if not allows:
         return True

@@ -1,14 +1,20 @@
-"""Kubernetes state from `kubectl get pods,services,serviceaccounts,networkpolicies -A -o json`.
+"""Kubernetes state from
+`kubectl get pods,services,serviceaccounts,networkpolicies,namespaces -A -o json`.
 
 That output does not name the cluster, so the caller passes it. Entity IDs are
-`k8s:<type>:<cluster>/<namespace>/<name>`.
+`k8s:<type>:<cluster>/<namespace>/<name>`, and `k8s:namespace:<cluster>/<name>`.
 
 Reachability is deliberately narrow: a Service of type LoadBalancer with an assigned
 address, no internal-scheme annotation and no source-range limit is internet-facing.
-NodePort Services, Ingress objects and cloud security groups are not modelled. A
-NetworkPolicy that selects an exposed pod is not evaluated; the exposes edge says so.
+NodePort Services, Ingress objects and cloud security groups are not modelled.
+
+Each exposes edge (Service to pod) records whether NetworkPolicy lets a connection from
+outside the cluster reach the pod on one of the Service's target ports: allowed, denied,
+or not evaluated, with notes. netpol.py says what "from outside" means and what it cannot
+know. A path rule passes the edge unless the answer is denied.
 """
 
+from .. import netpol
 from ..schema import INTERNET, entity_id
 from . import Delta, need, read_json
 
@@ -19,6 +25,7 @@ INTERNAL_ANNOTATIONS = {
     "service.beta.kubernetes.io/aws-load-balancer-internal": {"true", "0.0.0.0/0"},
 }
 KINDS = ("Pod", "Service", "ServiceAccount", "NetworkPolicy")
+NAMESPACE = "Namespace"
 
 
 def load(path):
@@ -29,6 +36,9 @@ def load(path):
         md = item.get("metadata") if isinstance(item, dict) else None
         need(isinstance(md, dict) and isinstance(item.get("kind"), str) and isinstance(md.get("name"), str),
              "k8s", "an item lacks kind or metadata.name")
+        if item["kind"] in KINDS or item["kind"] == NAMESPACE:
+            for key in ("labels", "annotations"):
+                need(isinstance(md.get(key) or {}, dict), "k8s", f"{item['kind']} {md['name']!r} has bad {key}")
         if item["kind"] in KINDS:
             need(isinstance(md.get("namespace"), str), "k8s", f"{item['kind']} {md['name']!r} lacks a namespace")
             need(isinstance(item.get("spec", {}), dict), "k8s", f"{item['kind']} {md['name']!r} has a bad spec")
@@ -37,6 +47,16 @@ def load(path):
 
 def _native(cluster, md):
     return f"{cluster}/{md['namespace']}/{md['name']}"
+
+
+def _container_ports(spec):
+    out = []
+    for c in spec.get("containers") or []:
+        for port in (c.get("ports") or []) if isinstance(c, dict) else []:
+            if isinstance(port, dict):
+                out.append({"name": port.get("name"), "port": port.get("containerPort"),
+                            "protocol": port.get("protocol") or "TCP"})
+    return out
 
 
 def _labels(md):
@@ -61,7 +81,7 @@ def _internet_facing(svc):
     return not ranges or "0.0.0.0/0" in ranges
 
 
-def apply(store, data, cluster, at):
+def apply(store, data, cluster, at, outside=netpol.OUTSIDE):
     delta, seen_e, seen_x = Delta(), set(), set()
 
     def ent(eid, etype, attrs, labels):
@@ -77,6 +97,11 @@ def apply(store, data, cluster, at):
 
     if store.upsert_entity(INTERNET, "internet", {}, {}, "builtin", at):
         delta.entity(INTERNET, "internet")
+    for item in data["items"]:
+        if item["kind"] == NAMESPACE:
+            md = item["metadata"]
+            ent(entity_id("namespace", f"{cluster}/{md['name']}"), "namespace",
+                {"name": md["name"], "namespace_labels": dict(md.get("labels") or {})}, _labels(md))
     items = [i for i in data["items"] if i["kind"] in KINDS]
     pods = []
     netpols = []
@@ -93,16 +118,23 @@ def apply(store, data, cluster, at):
             privileged = any(((c.get("securityContext") or {}).get("privileged") is True) for c in containers)
             sa = spec.get("serviceAccountName") or "default"
             pid = entity_id("pod", native)
-            ent(pid, "pod", {"name": md["name"], "namespace": md["namespace"], "service_account": sa,
-                             "privileged": privileged, "node": spec.get("nodeName"),
-                             "pod_labels": dict(md.get("labels") or {})}, _labels(md))
+            attrs = {"name": md["name"], "namespace": md["namespace"], "service_account": sa,
+                     "privileged": privileged, "node": spec.get("nodeName"),
+                     "pod_labels": dict(md.get("labels") or {}), "container_ports": _container_ports(spec),
+                     "host_network": spec.get("hostNetwork") is True}
+            ent(pid, "pod", attrs, _labels(md))
             edge("runs_as", pid, entity_id("service_account", f"{cluster}/{md['namespace']}/{sa}"))
-            pods.append((pid, md))
+            pods.append((pid, md, attrs))
         elif kind == "NetworkPolicy":
-            sel = (spec.get("podSelector") or {}).get("matchLabels") or {}
-            ent(entity_id("network_policy", native), "network_policy",
-                {"name": md["name"], "namespace": md["namespace"], "pod_selector": sel}, _labels(md))
-            netpols.append((md["namespace"], md["name"], sel))
+            # A missing podSelector is an empty one, which selects every pod in the namespace.
+            sel = spec.get("podSelector")
+            egress = spec.get("egress")
+            attrs = {"name": md["name"], "namespace": md["namespace"], "pod_selector": {} if sel is None else sel,
+                     "policy_types": spec.get("policyTypes"), "ingress": spec.get("ingress"),
+                     "egress_rules": len(egress) if isinstance(egress, list) else (0 if egress is None else None)}
+            ent(entity_id("network_policy", native), "network_policy", attrs, _labels(md))
+            netpols.append(attrs)
+    source = netpol.outside(outside)
     for item in items:
         if item["kind"] != "Service":
             continue
@@ -110,17 +142,19 @@ def apply(store, data, cluster, at):
         sid = entity_id("service", _native(cluster, md))
         selector = dict(spec.get("selector") or {})
         facing = _internet_facing(item)
+        ports = spec.get("ports")
         ent(sid, "service", {"name": md["name"], "namespace": md["namespace"], "service_type": spec.get("type"),
-                             "selector": selector, "internet_facing": facing}, _labels(md))
+                             "selector": selector, "internet_facing": facing, "ports": ports}, _labels(md))
         if facing:
             edge("reachable_from", sid, INTERNET)
-        for pid, pmd in pods:
+        for pid, pmd, pattrs in pods:
             plabels = pmd.get("labels") or {}
             if pmd["namespace"] == md["namespace"] and _selects(selector, plabels):
-                # An empty podSelector selects every pod in the namespace.
-                notes = sorted(f"NetworkPolicy {ns}/{name} not evaluated" for ns, name, sel in netpols
-                               if ns == pmd["namespace"] and (not sel or _selects(sel, plabels)))
-                edge("exposes", sid, pid, {"not_evaluated": notes} if notes else {})
+                answer, names, notes = netpol.service_ingress(netpols, pattrs, ports, source)
+                attrs = {"ingress_from_outside": netpol.verdict(answer), "network_policies": names}
+                if notes:
+                    attrs["not_evaluated"] = sorted(notes)
+                edge("exposes", sid, pid, attrs)
     gone_e, gone_x = store.sweep(SOURCE, seen_e, seen_x, at)
     for eid, etype in gone_e:
         delta.entity(eid, etype)

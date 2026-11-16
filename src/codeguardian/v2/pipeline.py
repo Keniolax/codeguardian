@@ -8,7 +8,7 @@ run the detection rules for its action, and correlate what opened.
 
 from collections import Counter, defaultdict
 
-from . import correlate, detect, paths, posture
+from . import correlate, detect, netpol, paths, posture
 from . import rules as R
 from .collectors import CollectorError, Delta
 from .collectors import ai as ai_collector
@@ -20,8 +20,9 @@ from .schema import entity_id, finding_id
 
 
 class Pipeline:
-    def __init__(self, store, rules, clock, cluster="lab"):
+    def __init__(self, store, rules, clock, cluster="lab", outside=netpol.OUTSIDE):
         self.store, self.clock, self.cluster = store, clock, cluster
+        self.outside = tuple(outside)  # address ranges a connection from outside may come from
         self.posture = [r for r in rules if r["kind"] == "posture"]
         self.paths = [r for r in rules if r["kind"] == "path"]
         self.detections = defaultdict(list)
@@ -47,7 +48,8 @@ class Pipeline:
             jobs.append((aws_collector.SOURCE, lambda: aws_collector.apply(self.store, aws_collector.load(*aws), at)))
         if k8s is not None:
             jobs.append((k8s_collector.SOURCE,
-                         lambda: k8s_collector.apply(self.store, k8s_collector.load(k8s), self.cluster, at)))
+                         lambda: k8s_collector.apply(self.store, k8s_collector.load(k8s), self.cluster, at,
+                                                     self.outside)))
         if ai is not None:
             jobs.append((ai_collector.SOURCE, lambda: ai_collector.apply(self.store, ai_collector.load(ai), at)))
         for name, job in jobs:

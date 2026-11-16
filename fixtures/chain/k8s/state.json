@@ -293,6 +293,90 @@
           ]
         }
       }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "agents",
+        "uid": "00000000-0000-4000-8000-000000000401",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "1000",
+        "labels": {
+          "kubernetes.io/metadata.name": "agents"
+        }
+      },
+      "spec": {
+        "finalizers": [
+          "kubernetes"
+        ]
+      },
+      "status": {
+        "phase": "Active"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "default",
+        "uid": "00000000-0000-4000-8000-000000000402",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "1000",
+        "labels": {
+          "kubernetes.io/metadata.name": "default"
+        }
+      },
+      "spec": {
+        "finalizers": [
+          "kubernetes"
+        ]
+      },
+      "status": {
+        "phase": "Active"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "monitoring",
+        "uid": "00000000-0000-4000-8000-000000000403",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "1000",
+        "labels": {
+          "kubernetes.io/metadata.name": "monitoring"
+        }
+      },
+      "spec": {
+        "finalizers": [
+          "kubernetes"
+        ]
+      },
+      "status": {
+        "phase": "Active"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "web",
+        "uid": "00000000-0000-4000-8000-000000000404",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "1000",
+        "labels": {
+          "kubernetes.io/metadata.name": "web"
+        }
+      },
+      "spec": {
+        "finalizers": [
+          "kubernetes"
+        ]
+      },
+      "status": {
+        "phase": "Active"
+      }
     }
   ]
 }
