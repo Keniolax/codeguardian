@@ -371,3 +371,29 @@ def test_rule_loader_refuses_an_edge_attr_it_does_not_know():
     with pytest.raises(RuleError, match="has no attr"):
         validate(rule("labels"))
     validate(rule("ingress_from_outside"))
+
+
+def test_reach_prints_each_answer_and_escapes_policy_text(tmp_path, capsys):
+    data = json.loads(LAYOUT.read_text())
+    data["items"].append(allow(HOSTILE, EVERY, {"matchExpressions": [{"key": "app", "operator": "Gt", "values": ["1"]}]},
+                               ns="shop"))
+    path = tmp_path / "k8s.json"
+    path.write_text(json.dumps(data))
+    db = str(tmp_path / "m.db")
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", SNAPSHOT_AT, "--cluster", "course", "--k8s", str(path)]) == 0
+    capsys.readouterr()
+    answers = {}
+    for src in ("client/client-7c4b", "outsider/outsider-2f9a"):
+        assert cli(["reach", "--db", db, "--now", NOW, "--from", src, "--to", "shop/shop-web-5d8f", "--port", "3000"]) == 0
+        answers[src] = capsys.readouterr().out
+    assert answers["client/client-7c4b"].startswith("allowed: client/client-7c4b -> shop/shop-web-5d8f on TCP 3000\n")
+    # The hostile policy may apply and allows everything, so the outsider's answer is not known.
+    assert answers["outsider/outsider-2f9a"].startswith("not evaluated: ")
+    for out in answers.values():
+        assert "\x1b" not in out
+        assert all(line.startswith(("allowed: ", "not evaluated: ", "  note: ", "  this assumes"))
+                   for line in out.splitlines()), out
+    # Control: without the hostile policy the outsider is denied.
+    (tmp_path / "control").mkdir()
+    store = layout(tmp_path / "control")
+    assert netpol.pod_to_pod(store, OUTSIDER, SHOP, 3000)[0] == "denied"

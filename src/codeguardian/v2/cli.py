@@ -1,4 +1,4 @@
-"""Command line for version 2: ingest, watch, findings, incidents, plan, explain, ask, bench."""
+"""Command line for version 2: ingest, watch, findings, incidents, plan, explain, ask, reach, bench."""
 
 import json
 import platform
@@ -7,7 +7,7 @@ import tempfile
 import time
 from pathlib import Path
 
-COMMANDS = ("ingest", "watch", "findings", "incidents", "plan", "explain", "ask", "bench")
+COMMANDS = ("ingest", "watch", "findings", "incidents", "plan", "explain", "ask", "reach", "bench")
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "chain"
 
 
@@ -54,6 +54,12 @@ def add_subcommands(sub):
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
     p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
 
+    p = common(sub.add_parser("reach", help="whether NetworkPolicy lets one pod connect to another"))
+    p.add_argument("--from", dest="src", required=True, metavar="NAMESPACE/POD", help="the pod that connects")
+    p.add_argument("--to", dest="dst", required=True, metavar="NAMESPACE/POD", help="the pod it connects to")
+    p.add_argument("--port", type=int, required=True, help="the port on the destination pod")
+    p.add_argument("--protocol", default="TCP", choices=["TCP", "UDP", "SCTP"])
+
     p = sub.add_parser("bench", help="replay the chain mixed with seeded noise and time each event")
     p.add_argument("--events", type=int, default=10_000, help="noise events to add to the chain")
     p.add_argument("--seed", type=int, default=7)
@@ -98,6 +104,8 @@ def run(a):
     if a.cmd == "incidents":
         sys.stdout.write(render.incidents(store))
         return 0
+    if a.cmd == "reach":
+        return _reach(a, store, pipe)
     if a.cmd == "plan":
         from .respond import plan
 
@@ -191,6 +199,24 @@ def _ingest(a, store, pipe, clock):
         print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
         return 2
     print(f"opened {opened}, resolved {resolved} findings")
+    return 0
+
+
+def _reach(a, store, pipe):
+    from .netpol import pod_to_pod
+    from .render import term
+    from .schema import entity_id
+
+    ids = []
+    for ref in (a.src, a.dst):
+        if ref.count("/") != 1 or not all(ref.split("/")):
+            raise SystemExit(f"{term(ref)}: give a pod as NAMESPACE/NAME")
+        ids.append(entity_id("pod", f"{pipe.cluster}/{ref}"))
+    answer, notes = pod_to_pod(store, ids[0], ids[1], a.port, a.protocol)
+    print(f"{answer}: {term(a.src)} -> {term(a.dst)} on {a.protocol} {a.port}")
+    for n in notes:
+        print(f"  note: {term(n)}")
+    print("  this assumes the cluster's network plugin enforces NetworkPolicy; the model cannot see that")
     return 0
 
 
