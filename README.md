@@ -91,3 +91,94 @@ cost for the whole week was about $0.10 (about 22,000 input and 5,000 output tok
 - An approval control only works if the author of a change cannot grant it. Changes to
   `.gate/` need the `gate-change-approved` label, applied by a maintainer after review,
   never by the automation that opened the change.
+
+## Version 2 (in progress)
+
+Version 2 keeps one model of the environment in SQLite: entities (pods, roles, buckets,
+AI agents) and the edges between them, each with its source and the time it was seen.
+Posture rules check one entity. Path rules follow a chain of edges. Detection rules join
+each event to the model first. Stage 1 proves this on one recorded chain, in
+`src/codeguardian/v2/`, with the rules in `src/codeguardian/v2/rules/*.toml`.
+
+The chain: an AI agent runs in a pod behind an internet-facing load balancer. The pod's
+service account assumes an IAM role (IRSA). A CI role adds a policy that lets the role
+read a bucket tagged sensitive. Someone opens a shell in the pod, reads its token, and
+the role reads the sensitive bucket, which none of the agent's tools declares.
+
+What stage 1 does:
+
+- Reads exported files: `aws iam get-account-authorization-details`, the bucket list and
+  tags, `kubectl get ... -A -o json`, and a small declared AI inventory.
+- Reads CloudTrail, Kubernetes audit and Falco records one at a time from a file or
+  stdin. A `PutRolePolicy` record changes the model at once. `AttachRolePolicy` carries
+  only an ARN, so a policy the last snapshot did not hold is marked unknown.
+- Opens one path finding for the chain, from the internet to the sensitive bucket.
+  Removing any one edge of the path removes the finding. The finding resolves, with the
+  same ID, when `DeleteRolePolicy` arrives.
+- Puts the runtime alerts, the cloud events and the path finding for the agent's pod in
+  one incident. A shell in another pod on the same node stays in its own incident.
+- Prints a response plan from a fixed catalog of three actions, as commands for a person
+  to review. Nothing runs.
+- `explain` and `ask` use the model through v1's `providers.py`. The model's answer is
+  joined to findings by ID; it cannot open, close or change a finding.
+- When a collector cannot read its file, it fails and its facts become stale. A stale
+  fact still counts, so a finding that depends on it stays open.
+
+The IAM resolver reads Allow statements and wildcards only. Conditions, Deny statements,
+boundaries, SCPs and bucket policies are not evaluated; the output says so.
+
+How to run it, on the recorded fixtures (`--now` and `--at` set the clock, because the
+data is from 2026-11-14):
+
+```
+export PYTHONPATH=src
+F=fixtures/chain
+.venv/bin/python -m codeguardian ingest --db demo.db --now 2026-11-14T10:30:00Z --at 2026-11-14T09:55:00Z \
+  --aws-iam $F/aws/iam.json --aws-buckets $F/aws/s3-buckets.json --aws-tags $F/aws/s3-tags.json \
+  --k8s $F/k8s/state.json --ai $F/ai/inventory.json
+head -n 9 $F/events/chain.ndjson | .venv/bin/python -m codeguardian watch --db demo.db --now 2026-11-14T10:30:00Z
+.venv/bin/python -m codeguardian incidents --db demo.db --now 2026-11-14T10:30:00Z
+.venv/bin/python -m codeguardian plan --db demo.db --now 2026-11-14T10:30:00Z --incident 83db1215
+.venv/bin/python -m codeguardian explain --db demo.db --now 2026-11-14T10:30:00Z --incident 83db1215 \
+  --provider recorded --answer $F/explain-answer.json
+.venv/bin/python -m codeguardian ask --db demo.db --now 2026-11-14T10:30:00Z --question "Which roles can read sensitive buckets?" \
+  --provider recorded --answer $F/ask-answer.json
+tail -n 1 $F/events/chain.ndjson | .venv/bin/python -m codeguardian watch --db demo.db --now 2026-11-14T10:30:00Z
+.venv/bin/python -m codeguardian findings --db demo.db --now 2026-11-14T10:30:00Z
+.venv/bin/python -m codeguardian bench --events 10000 --seed 7
+.venv/bin/python tests/mutants.py
+```
+
+The two recorded answers are written by hand, not by a model. `explain` and `ask` have not
+been run against a live model yet.
+
+What was measured, on 2026-11-15, at commit `f1f5ab4`:
+
+- Tests: 103 pass (25 for v1, 78 for v2). The mutation run removes 46 controls one at a
+  time; each of the 56 tests it names fails without its control.
+- Speed: 10,010 events (the 10 chain records and 10,000 generated benign records, seed
+  7), each processed in full and committed to an SQLite file on disk. Apple M1, macOS
+  26.6.2, Python 3.12.14, three runs: 5,880 to 6,444 events per second; per event p50
+  0.10 to 0.11 ms, p95 0.38 to 0.47 ms, max 5.3 to 8.7 ms. The chain's findings and
+  incident came out the same as without the noise.
+
+These numbers come from recorded data, not a live environment. The model holds 24
+entities and 20 edges, and the noise copies the chain's own record shapes, so the numbers
+do not predict the speed on a real account. The time is pipeline time only: CloudTrail
+delivers a record minutes after the call, and that delay is not included.
+
+What was learned:
+
+- An event can change the model only as far as the record shows. `PutRolePolicy` carries
+  the policy document; `AttachRolePolicy` carries only an ARN. A guess there would read as
+  "safe", so the role is marked as not fully known instead.
+- IRSA needs two facts from two collectors: the service account's annotation and the
+  role's trust policy. The mutation run removes each half on its own, and a test fails
+  each time.
+- A passing test can prove less than its name says. The test for "re-run only the
+  affected rules" still passed when the path rule re-ran on every change, because every
+  event that changes the model here touches the path rule's own edge types. The mutation
+  run showed this. The test proves the claim for posture rules, counted per entity, and
+  for events that change nothing; it does not prove it for the path rule.
+- Correlation by shared entity needs care with hub nodes. Every exposed service touches
+  the internet node, so it is left out of the join key.
