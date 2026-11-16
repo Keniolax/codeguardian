@@ -148,12 +148,13 @@ To take a snapshot of your own account or cluster, use the export scripts. They 
 `aws` and `kubectl` CLIs you already have, with read calls only, and write the files the
 collectors read, with mode 0600, plus a manifest. They refuse to write inside a git work
 tree unless git ignores the path (`exports/` is ignored here). Then ingest takes the time
-and the cluster name from the manifests:
+and the cluster name from the manifests. Keep the database under `exports/` too, since it
+holds the same real data:
 
 ```
 .venv/bin/python -m codeguardian.export aws --out exports/aws
 .venv/bin/python -m codeguardian.export k8s --out exports/k8s --cluster-name lab
-.venv/bin/python -m codeguardian ingest --db real.db --aws-export exports/aws \
+.venv/bin/python -m codeguardian ingest --db exports/model.db --aws-export exports/aws \
   --k8s-export exports/k8s --ai my-inventory.json
 ```
 
