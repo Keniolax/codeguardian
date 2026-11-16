@@ -119,6 +119,33 @@ is read, and the role reads the bucket, which none of the agent's tools declares
 - The IAM resolver reads Allow statements and wildcards only. Anything else (conditions,
   Deny, NotAction, boundaries, SCPs, bucket policies) is listed as not evaluated.
 
+Kubernetes NetworkPolicy is evaluated as the Kubernetes reference defines it. For each pod
+that a Service selects, the collector asks one question: can a connection from outside
+the cluster reach the pod on one of the Service's target ports? The answer is allowed,
+denied or not evaluated. It is stored on the edge from the Service to the pod, and the
+path rules cross that edge unless the answer is denied.
+
+- "From outside" means a source address in the outside range. By default the range is
+  every IPv4 and IPv6 address; `ingest --outside-source CIDR` makes it smaller. Only an
+  `ipBlock`, or a rule with no `from`, can admit such a source, because `podSelector`
+  and `namespaceSelector` select pods.
+- The model cannot see two facts, and a path that a policy closes depends on both. It
+  cannot see whether the cluster's network plugin enforces NetworkPolicy; without such a
+  plugin a policy has no effect. It cannot see which source address the pod gets. A load
+  balancer or a node can change it, and the reference does not say if that happens
+  before or after the policy applies. Traffic from the pod's own node is always allowed.
+- The evaluator reads `policyTypes`, `podSelector` and `namespaceSelector` (with
+  `matchLabels` and the four `matchExpressions` operators), both selectors in one entry,
+  `ipBlock` with `except`, and `ports` with protocol and named ports. Some cases it does
+  not decide: a port inside an `endPort` range (plugins differ), a named port not found
+  once on the pod, an unknown operator or policy type, a bad CIDR, and a pod on the host
+  network. Each gives "not evaluated" with a note, and the path stays open.
+- Egress rules are not evaluated. They cannot block a connection into a pod, because
+  replies to allowed ingress are allowed. When an egress policy selects the source pod
+  of a pod-to-pod question, the answer is "not evaluated".
+- `reach` gives the answer for one pod to another. The k8s export now lists namespaces
+  too, because a `namespaceSelector` reads namespace labels.
+
 How to run it on the fixtures. `--now` and `--at` set the clock, because the data is
 from 2026-11-14.
 
@@ -143,6 +170,20 @@ tail -n 1 $F/events/chain.ndjson | .venv/bin/python -m codeguardian watch --db d
 
 The two recorded model answers are written by hand. `explain` and `ask` have not been run
 against a live model.
+
+The NetworkPolicy layout of a cluster used in the course, written by hand from the
+reference: namespace `shop` has a default-deny policy and an allow from namespaces
+labelled `access=shop` on TCP 3000. Namespace `client` has that label; `outsider` does not.
+
+```
+N=fixtures/netpol
+.venv/bin/python -m codeguardian ingest --db course.db --now 2026-11-14T10:30:00Z --at 2026-11-14T09:55:00Z \
+  --cluster course --k8s $N/shop.json
+.venv/bin/python -m codeguardian reach --db course.db --now 2026-11-14T10:30:00Z \
+  --from client/client-7c4b --to shop/shop-web-5d8f --port 3000
+.venv/bin/python -m codeguardian reach --db course.db --now 2026-11-14T10:30:00Z \
+  --from outsider/outsider-2f9a --to shop/shop-web-5d8f --port 3000
+```
 
 To take a snapshot of your own account or cluster, use the export scripts. They run the
 `aws` and `kubectl` CLIs you already have, with read calls only, and write the files the
@@ -169,17 +210,23 @@ The least privilege the export needs:
 
 - AWS: `iam:GetAccountAuthorizationDetails`, `s3:ListAllMyBuckets`, `s3:GetBucketTagging`.
 - Kubernetes: `list` on `pods`, `services` and `serviceaccounts` (core group) and on
-  `networkpolicies` (`networking.k8s.io`), in all namespaces. kubectl also reads API
-  discovery, which every authenticated user may do by default.
+  `networkpolicies` (`networking.k8s.io`), in all namespaces, and `list` on `namespaces`,
+  which are cluster-scoped. kubectl also reads API discovery, which every authenticated
+  user may do by default.
 - Local only: `kubectl config current-context` reads the kubeconfig, and
   `git check-ignore` reads the repository.
 
-Measured on 2026-11-16, the tests at commit `48b762f` and the speed at `dd2dff1`:
+Measured on 2026-11-16, the tests at commit `77510fc` and the speed at `dd2dff1`:
 
-- 146 tests pass (25 for v1, 121 for v2). The mutation run removes 84 controls one at a
-  time and runs the tests that name each one: 106 mutant-test pairs, 92 distinct tests,
-  all fail without their control. One case, a pod running as a different service
-  account, has no mutant of its own; that edge is absent from the input itself.
+- 181 tests pass (25 for v1, 156 for v2, of which 34 are for NetworkPolicy). The
+  mutation run removes 128 controls one at a time and runs the tests that name each one:
+  167 mutant-test pairs, 126 distinct tests, all fail without their control. One case, a
+  pod running as a different service account, has no mutant of its own; that edge is
+  absent from the input itself. In the NetworkPolicy tests every parametrized case has a
+  mutant of its own, and the run fails if one does not.
+- On the course layout (3 namespaces, 3 pods, 1 Service, 2 policies), `reach` answers
+  allowed for `client` to `shop` on TCP 3000 and denied for `outsider`. The Service's
+  edge answers denied for a connection from outside the cluster.
 - 10,010 events (the 10 chain records and 10,000 generated benign records, seed 7),
   each processed in full and committed to an SQLite file in WAL mode with
   `synchronous=NORMAL`, so there is no fsync per commit. Apple M1, macOS 26.6.2, Python
@@ -187,7 +234,8 @@ Measured on 2026-11-16, the tests at commit `48b762f` and the speed at `dd2dff1`
   p95 0.38 to 0.45 ms, max 6.6, 11.4 and 7.1 ms. The chain incident held the same seven
   rules as in a run without noise, and the path finding ended resolved.
 
-The data is recorded, not live. The model holds 24 entities and 20 edges, and the noise
+The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
+chain fixture now also lists its 4 namespaces), and the noise
 copies the chain's own record shapes, so these numbers do not predict speed on a real
 account. They are pipeline time only; CloudTrail delivers a record minutes after the
 call, and that delay is not included.
@@ -207,3 +255,7 @@ What was learned:
   skipped statement, a Deny or a boundary now gets a finding of its own.
 - In correlation, the internet node touches every exposed service, so it is left out of
   the join key.
+- A control must give the other answer. The first control for a named port gave the
+  Service's target port that name, so the policy admitted the traffic, and the "control"
+  opened the path as well. The test failed. The control now gives the name to another
+  port.
