@@ -64,7 +64,7 @@ MUTANTS = [
      "        _need(len(rule[\"hops\"]) <= MAX_HOPS, rule, f\"{len(rule['hops'])} hops; the limit is {MAX_HOPS}\")\n", "",
      [T("test_rule_validation_refuses_what_it_does_not_understand[rule4-limit]", CORE)]),
     ("unknown edge type accepted by the rule loader", V2 + "rules.py",
-     "    _need(s.get(\"edge\") in EDGE_TYPES, rule, f\"unknown edge type {s.get('edge')!r}\")\n", "",
+     "    _need(_is(s.get(\"edge\"), EDGE_TYPES), rule, f\"unknown edge type {s.get('edge')!r}\")\n", "",
      [T("test_rule_validation_refuses_what_it_does_not_understand[rule3-unknown edge type]", CORE)]),
     # B: the model follows events.
     ("PutRolePolicy not applied to the model", V2 + "pipeline.py",
@@ -126,6 +126,10 @@ MUTANTS = [
      '    def evaluate_delta(self, delta, at):\n        changes = {"opened": [], "resolved": []}\n        if not delta:\n            return changes\n',
      '    def evaluate_delta(self, delta, at):\n        return self.evaluate_all(at)\n',
      [T("test_e_event_reruns_only_the_rules_its_change_can_affect")]),
+    ("path rule re-runs on every model change", V2 + "pipeline.py",
+     '            if ents & delta.entity_types or edges & delta.edge_types:\n                self._path(rule, at, changes)',
+     '            self._path(rule, at, changes)',
+     [T("test_e_path_rule_reruns_only_when_a_type_it_follows_changes")]),
     ("posture rules re-run on entities the change did not touch", V2 + "pipeline.py",
      '            for eid, etype in delta.entities.items():\n                if etype == rule["entity"]:\n                    self._posture(rule, eid, at, changes)',
      '            if rule["entity"] in delta.entity_types:\n                for ent in self.store.entities(rule["entity"]):\n                    self._posture(rule, ent["id"], at, changes)',
@@ -183,6 +187,10 @@ MUTANTS = [
      '        ev["ingested_at"] = self.clock.now()',
      '        from datetime import datetime\n        ev["ingested_at"] = datetime.now().isoformat()',
      [T("test_f_logic_reads_time_only_from_the_data_or_the_injected_clock")]),
+    ("model's action_id used before its type is checked", V2 + "respond.py",
+     "    spec = CATALOG.get(action_id) if isinstance(action_id, str) else None",
+     "    spec = CATALOG.get(action_id)",
+     [T("test_f_model_values_of_the_wrong_type_are_dropped_not_fatal")]),
     # Collectors fail loudly; stale is not safe.
     ("collector failure recorded as success", V2 + "pipeline.py",
      "                self.store.record_source(name, False, at, str(exc))\n                errors.append(str(exc))",
@@ -209,6 +217,21 @@ MUTANTS = [
      "        for c in where:\n            R._cond(c, {\"id\": \"query\"}, q[\"find\"])", "        pass",
      [T("test_ask_refuses_malformed_and_out_of_schema_queries[query4]", ASK),
       T("test_ask_refuses_malformed_and_out_of_schema_queries[query5]", ASK)]),
+    ("ask uses the entity type before its type is checked", V2 + "ask.py",
+     '    if not isinstance(q.get("find"), str) or q["find"] not in ENTITY_TYPES:',
+     '    if q.get("find") not in ENTITY_TYPES:',
+     [T("test_ask_refuses_malformed_and_out_of_schema_queries[query9]", ASK)]),
+    ("skipped NotAction statement leaves no marker", V2 + "policy.py",
+     '                markers.add(f"{where}: NotAction/NotResource not evaluated")', "                pass",
+     [T("test_skipped_statement_is_a_visible_finding_not_a_silent_deny", CORE)]),
+    ("source that never ran is not listed", V2 + "render.py",
+     '        if s is None:\n            lines.append(f"- source {name}: NEVER RUN.',
+     '        if s is None:\n            continue\n            lines.append(f"- source {name}: NEVER RUN.',
+     [T("test_first_run_failure_reports_failed_not_empty", CORE)]),
+    ("source past its refresh period shown as ok", V2 + "render.py",
+     '        elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:',
+     '        elif False:',
+     [T("test_source_past_its_refresh_period_is_shown_stale", CORE)]),
     ("resolver hides Condition", V2 + "policy.py",
      '                    if conditional:\n                        g["not_evaluated"].add(f"Condition in {where} not evaluated")',
      '                    pass',
@@ -243,7 +266,14 @@ def main():
     if missing:
         print("tests with no mutant:", ", ".join(missing))
         return 1
-    nodes = sorted({node for *_, tests in MUTANTS for node in tests})
+    named = {node for *_, tests in MUTANTS for node in tests}
+    env = dict(os.environ, PYTHONPATH="src", PYTHONDONTWRITEBYTECODE="1")
+    collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN],
+                               cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
+    loose = [n for n in collected if "[" in n and n.startswith(CHAIN) and n not in named]
+    for n in loose:
+        print(f"parametrized case with no mutant of its own: {n.split('::', 1)[1]}")
+    nodes = sorted(named)
     baseline = [n for n in nodes if pytest(n) != 0]
     if baseline:
         print("tests that fail before any mutation:", ", ".join(baseline))

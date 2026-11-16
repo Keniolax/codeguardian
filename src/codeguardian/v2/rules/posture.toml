@@ -21,6 +21,16 @@ entity = "iam_role"
 where = [{ attr = "unknown_policy_documents", op = "nonempty" }]
 
 [[rule]]
+id = "POST-IAM-003"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "A role has policy statements the resolver did not evaluate, so its permissions may be wider than the model shows"
+frameworks = []
+entity = "iam_role"
+where = [{ attr = "not_evaluated", op = "nonempty" }]
+
+[[rule]]
 id = "POST-K8S-001"
 version = 1
 kind = "posture"

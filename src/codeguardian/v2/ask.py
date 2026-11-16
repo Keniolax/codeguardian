@@ -68,7 +68,7 @@ def check_query(q):
     extra = set(q) - KEYS
     if extra:
         raise QueryError(f"unknown query keys {sorted(extra)}")
-    if q.get("find") not in ENTITY_TYPES:
+    if not isinstance(q.get("find"), str) or q["find"] not in ENTITY_TYPES:
         raise QueryError(f"unknown entity type {q.get('find')!r}")
     where, related, limit = q.get("where", []), q.get("related", []), q.get("limit", 20)
     if not isinstance(where, list) or not isinstance(related, list):

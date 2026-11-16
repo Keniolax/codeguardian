@@ -80,7 +80,15 @@ def test_first_run_failure_reports_failed_not_empty(tmp_path):
     with pytest.raises(CollectorError):
         pipe.snapshot(k8s=tmp_path / "missing.json")
     out = render.findings(store, NOW)
-    assert "k8s\\.state: FAILED" in out
+    assert "k8s.state: FAILED" in out
+    assert "aws.state: NEVER RUN" in out and "ai.inventory: NEVER RUN" in out
+
+
+def test_source_past_its_refresh_period_is_shown_stale(tmp_path):
+    store, _ = build(tmp_path)
+    assert "k8s.state: ok" in render.findings(store, "2026-11-14T10:30:00Z")
+    out = render.findings(store, "2026-11-16T10:30:00Z")
+    assert "k8s.state: STALE" in out and "aws.state: STALE" in out
 
 
 def test_facts_go_stale_after_the_refresh_period(tmp_path):
@@ -126,6 +134,18 @@ def test_resolver_marks_condition_deny_notaction_and_boundary():
     assert any("Deny" in n for n in notes)
     assert any("boundary" in n for n in notes)
     assert any("NotAction" in m for m in markers) and any("Deny statements" in m for m in markers)
+
+
+def test_skipped_statement_is_a_visible_finding_not_a_silent_deny(tmp_path):
+    def not_action_grant(iam):
+        role = next(r for r in iam["RoleDetailList"] if r["RoleName"] == "sentinel-agent")
+        role["RolePolicyList"].append({"PolicyName": "all-but-iam", "PolicyDocument": _doc(
+            {"Effect": "Allow", "NotAction": "iam:*", "Resource": "arn:aws:s3:::example-finance-records/*"})})
+
+    store, _ = build(tmp_path, iam="aws/iam.json", edit_iam=not_action_grant)
+    assert store.findings(status="open", rule_id="PATH-AI-001") == []  # the resolver cannot see this grant
+    (marker,) = store.findings(status="open", rule_id="POST-IAM-003")
+    assert marker["primary_entity"] == ROLE and any("NotAction" in n for n in marker["notes"])
 
 
 def test_resolver_lists_unknown_documents():

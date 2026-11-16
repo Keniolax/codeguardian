@@ -26,6 +26,11 @@ def _need(cond, rule, message):
         raise RuleError(f"rule {rule.get('id', '?')}: {message}")
 
 
+def _is(value, collection):
+    """Membership that refuses non-strings instead of raising TypeError on a list."""
+    return isinstance(value, str) and value in collection
+
+
 def _keys(obj, allowed, rule, where):
     _need(isinstance(obj, dict), rule, f"{where} must be a table")
     extra = set(obj) - set(allowed)
@@ -34,10 +39,10 @@ def _keys(obj, allowed, rule, where):
 
 def _cond(c, rule, etype=None):
     _keys(c, ("attr", "op", "value"), rule, "condition")
-    _need(c.get("op") in OPS, rule, f"unknown op {c.get('op')!r}")
+    _need(_is(c.get("op"), OPS), rule, f"unknown op {c.get('op')!r}")
     _need(isinstance(c.get("attr"), str), rule, "condition needs attr")
     if etype is not None:
-        _need(c["attr"] in ENTITY_TYPES[etype][2], rule, f"entity type {etype} has no attr {c['attr']!r}")
+        _need(_is(c["attr"], ENTITY_TYPES[etype][2]), rule, f"entity type {etype} has no attr {c['attr']!r}")
     if c["op"] not in ("nonempty", "empty"):
         _need("value" in c, rule, f"op {c['op']} needs a value")
     if c["op"] == "in":
@@ -46,10 +51,10 @@ def _cond(c, rule, etype=None):
 
 def _step(s, rule):
     _keys(s, ("edge", "dir", "to"), rule, "walk step")
-    _need(s.get("edge") in EDGE_TYPES, rule, f"unknown edge type {s.get('edge')!r}")
-    _need(s.get("dir") in ("out", "in"), rule, "dir must be out or in")
+    _need(_is(s.get("edge"), EDGE_TYPES), rule, f"unknown edge type {s.get('edge')!r}")
+    _need(_is(s.get("dir"), ("out", "in")), rule, "dir must be out or in")
     if "to" in s:
-        _need(s["to"] in ENTITY_TYPES, rule, f"unknown entity type {s['to']!r}")
+        _need(_is(s["to"], ENTITY_TYPES), rule, f"unknown entity type {s['to']!r}")
 
 
 def validate(rule):
@@ -57,21 +62,21 @@ def validate(rule):
     common = ("id", "version", "kind", "severity", "title", "frameworks")
     for key in common:
         _need(key in rule, rule, f"missing {key}")
-    _need(rule["kind"] in KINDS, rule, f"unknown kind {rule['kind']!r}")
+    _need(_is(rule["kind"], KINDS), rule, f"unknown kind {rule['kind']!r}")
     _need(isinstance(rule["version"], int), rule, "version must be an integer")
-    _need(rule["severity"] in SEVERITIES, rule, f"unknown severity {rule['severity']!r}")
+    _need(_is(rule["severity"], SEVERITIES), rule, f"unknown severity {rule['severity']!r}")
     _need(isinstance(rule["frameworks"], list) and all(isinstance(f, str) for f in rule["frameworks"]),
           rule, "frameworks must be a list of strings")
     kind = rule["kind"]
     if kind == "posture":
         _keys(rule, common + ("entity", "where"), rule, "rule")
-        _need(rule.get("entity") in ENTITY_TYPES, rule, f"unknown entity type {rule.get('entity')!r}")
+        _need(_is(rule.get("entity"), ENTITY_TYPES), rule, f"unknown entity type {rule.get('entity')!r}")
         _need(isinstance(rule.get("where"), list) and rule["where"], rule, "where must be a non-empty list")
         for c in rule["where"]:
             _cond(c, rule, rule["entity"])
     elif kind == "path":
         _keys(rule, common + ("start", "hops"), rule, "rule")
-        _need(rule.get("start") in ENTITY_TYPES, rule, f"unknown start type {rule.get('start')!r}")
+        _need(_is(rule.get("start"), ENTITY_TYPES), rule, f"unknown start type {rule.get('start')!r}")
         _need(isinstance(rule.get("hops"), list) and rule["hops"], rule, "hops must be a non-empty list")
         _need(len(rule["hops"]) <= MAX_HOPS, rule, f"{len(rule['hops'])} hops; the limit is {MAX_HOPS}")
         for h in rule["hops"]:
@@ -89,18 +94,18 @@ def validate(rule):
         _keys(rule, common + ("match", "when"), rule, "rule")
         m = rule.get("match")
         _keys(m, ("source", "actions", "outcome", "actor_type", "attrs"), rule, "match")
-        _need(m.get("source") in EVENT_SOURCES, rule, f"unknown source {m.get('source')!r}")
+        _need(_is(m.get("source"), EVENT_SOURCES), rule, f"unknown source {m.get('source')!r}")
         _need(isinstance(m.get("actions"), list) and m["actions"], rule, "match.actions must be a non-empty list")
         if "outcome" in m:
-            _need(m["outcome"] in OUTCOMES, rule, f"unknown outcome {m['outcome']!r}")
+            _need(_is(m["outcome"], OUTCOMES), rule, f"unknown outcome {m['outcome']!r}")
         if "actor_type" in m:
-            _need(m["actor_type"] in ENTITY_TYPES, rule, f"unknown actor_type {m['actor_type']!r}")
+            _need(_is(m["actor_type"], ENTITY_TYPES), rule, f"unknown actor_type {m['actor_type']!r}")
         for c in m.get("attrs", []):
             _cond(c, rule)
         bound = {"actor", "targets"}
         for w in rule.get("when", []):
             _keys(w, ("from", "walk", "bind", "excludes"), rule, "when")
-            _need(w.get("from") in bound, rule, f"when.from {w.get('from')!r} is not bound yet")
+            _need(_is(w.get("from"), bound), rule, f"when.from {w.get('from')!r} is not bound yet")
             _need(isinstance(w.get("walk"), list) and w["walk"], rule, "when.walk must be a non-empty list")
             for s in w["walk"]:
                 _step(s, rule)
@@ -108,7 +113,7 @@ def validate(rule):
             if "bind" in w:
                 bound.add(w["bind"])
             else:
-                _need(w["excludes"] in bound, rule, f"excludes {w['excludes']!r} is not bound")
+                _need(_is(w["excludes"], bound), rule, f"excludes {w['excludes']!r} is not bound")
     return rule
 
 

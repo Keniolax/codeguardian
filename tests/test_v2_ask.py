@@ -37,6 +37,8 @@ def test_ask_runs_a_valid_query_read_only(tmp_path):
     {"find": "pod", "where": [], "related": [{"edge": "peers_with", "dir": "out"}], "limit": 10},
     {"find": "pod", "where": [], "related": [], "limit": 100000},
     {"find": "pod", "where": "privileged", "related": [], "limit": 10},
+    {"find": ["pod"], "where": [], "related": [], "limit": 10},
+    {"find": "pod", "where": [], "related": [{"edge": "runs_as", "dir": "out", "to": ["service_account"]}], "limit": 10},
 ])
 def test_ask_refuses_malformed_and_out_of_schema_queries(tmp_path, query):
     store, _ = build(tmp_path)

@@ -42,7 +42,7 @@ class ActionError(ValueError):
 
 def check_action(action_id, params):
     """Returns the action if its ID is in the catalog and every parameter is typed right."""
-    spec = CATALOG.get(action_id)
+    spec = CATALOG.get(action_id) if isinstance(action_id, str) else None
     if spec is None:
         raise ActionError(f"action {action_id!r} is not in the catalog")
     if not isinstance(params, dict) or set(params) != set(spec["params"]):

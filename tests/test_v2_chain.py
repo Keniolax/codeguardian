@@ -286,7 +286,24 @@ def test_e_event_reruns_only_the_rules_its_change_can_affect(tmp_path):
     pipe.process(iam_event("PutRolePolicy"))
     # One role changed: the two role rules run once, on that role; the path rule runs once;
     # the pod rule does not run at all.
-    assert dict(pipe.evals) == {"POST-IAM-001": 1, "POST-IAM-002": 1, "PATH-AI-001": 1, "DET-AI-002": 1}
+    assert dict(pipe.evals) == {"POST-IAM-001": 1, "POST-IAM-002": 1, "POST-IAM-003": 1, "PATH-AI-001": 1,
+                                "DET-AI-002": 1}
+
+
+def test_e_path_rule_reruns_only_when_a_type_it_follows_changes(tmp_path):
+    from codeguardian.v2.collectors import Delta
+
+    store, pipe = build(tmp_path, iam="aws/iam.json")
+    pipe.evals.clear()
+    outside = Delta()
+    outside.entity("ai:tool:sentinel-agent/search_knowledge_base", "tool")
+    outside.edge("reads")
+    pipe.evaluate_delta(outside, "2026-11-14T10:00:00.000000Z")
+    assert dict(pipe.evals) == {}  # tools and reads edges are not on the path rule
+    inside = Delta()
+    inside.edge("has_permission")
+    pipe.evaluate_delta(inside, "2026-11-14T10:00:00.000000Z")
+    assert dict(pipe.evals) == {"PATH-AI-001": 1}
 
 
 def test_e_replaying_the_same_events_changes_nothing(tmp_path):
@@ -458,6 +475,19 @@ def test_f_plan_is_a_catalog_dry_run_with_exact_text(tmp_path):
     assert r["commands"] == ["aws iam delete-role-policy --role-name sentinel-agent --policy-name reports-read"]
     iso = render_action({"action_id": "k8s.isolate_pod", "params": {"namespace": "agents", "pod": "sentinel-agent-7d9f"}})
     assert "namespace: agents" in iso["manifest"] and "sentinel-agent-7d9f" not in iso["manifest"]
+
+
+def test_f_model_values_of_the_wrong_type_are_dropped_not_fatal(tmp_path):
+    store, inc = _chain_incident(tmp_path)
+    fid = inc["finding_ids"][0]
+    raw = {"summary": 7, "findings": [{"finding_id": [fid], "explanation": "x", "next_step": "y"},
+                                      {"finding_id": fid, "explanation": 5, "next_step": "y"}],
+           "actions": [{"action_id": ["aws.iam.delete_role_policy"], "params": []},
+                       {"action_id": "k8s.isolate_pod", "params": [{"name": "pod", "value": ["p"]},
+                                                                   {"name": "namespace", "value": "agents"}]}]}
+    result = explain.join(store, inc, raw)
+    assert result["actions"] == [] and len(result["dropped"]) == 4
+    assert not any(i["explained"] for i in result["items"]) and result["summary"] == ""
 
 
 @pytest.mark.parametrize("params", [

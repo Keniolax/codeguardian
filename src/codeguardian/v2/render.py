@@ -12,7 +12,10 @@ import json
 
 from ..render import safe
 from . import respond
+from .schema import REFRESH_SECONDS, seconds_between
 from .correlate import all_entities, members, timeline
+
+COLLECTORS = ("aws.state", "k8s.state", "ai.inventory")
 
 
 def _list(values, limit=400):
@@ -20,13 +23,21 @@ def _list(values, limit=400):
 
 
 def sources(store, now):
+    """Every collector, including one that never ran or has not run lately: a source
+    with no recent good run means the findings do not cover it."""
     lines = []
-    for s in store.sources():
-        if s["status"] != "ok":
-            lines.append(f"- source {safe(s['name'])}: FAILED at {safe(s['last_attempt'])}: {safe(s['error'] or '')}."
+    for name in COLLECTORS:
+        s = store.source(name)
+        if s is None:
+            lines.append(f"- source {name}: NEVER RUN. Nothing from it is in the model; findings do not cover it.")
+        elif s["status"] != "ok":
+            lines.append(f"- source {name}: FAILED at {s['last_attempt']}: {safe(s['error'] or '')}."
                          " Its facts are stale; results that depend on it are incomplete.")
+        elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:
+            lines.append(f"- source {name}: STALE, last good run {s['last_success']}, older than its refresh"
+                         f" period of {REFRESH_SECONDS[name] // 3600} h.")
         else:
-            lines.append(f"- source {safe(s['name'])}: ok, last good run {safe(s['last_success'])}")
+            lines.append(f"- source {name}: ok, last good run {s['last_success']}")
     return lines
 
 
