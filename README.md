@@ -192,12 +192,15 @@ Snapshots and records can arrive in any order. Each one is ordered by the time i
 own data, not by when it arrives.
 
 - A snapshot older than the last one applied from the same collector is refused and
-  changes nothing. `ingest` prints why and exits 3. The same snapshot a second time also
-  changes nothing. A different snapshot with the same time is refused and listed as not
-  evaluated, because which of the two held is not known. A broken export older than the
-  last good one does not mark its collector failed.
+  changes nothing. `ingest` prints why and exits 3, each time the snapshot is sent. The
+  snapshot the model holds, sent a second time, also changes nothing, and `ingest` exits
+  0. A different snapshot with the same time is refused and listed as not evaluated,
+  because which of the two held is not known. A broken export older than the last good
+  one does not mark its collector failed. A good snapshot older than a broken export, or
+  taken at the same time, does not clear the failure.
 - An IAM change record for a role the model does not hold yet waits. When a snapshot
-  brings the role, the record applies if it is newer than that snapshot.
+  brings the role, the record applies unless it is older than that snapshot. A record
+  with the same time as a snapshot counts after it, whichever of the two arrives first.
 - A detection that needs an actor or a target the model does not hold, or an edge from a
   collector that has never run, is held. Before, such a record read as "no match". It is
   decided after the next snapshot, against the model as it is then, not as it was at the
@@ -294,6 +297,8 @@ Measured on 2026-11-17 at commit `691bfdd`, for the ordering of snapshots and re
   path finding ended resolved.
 - After the stage 1 snapshot the model file is 147,456 bytes, against 114,688 on
   `v2/netpol`; the journal holds 11,235 bytes of snapshot content.
+- After the review fixes at `f84e86f`: 222 tests pass (22 for ordering). The mutation
+  run removes 210 controls: 272 mutant-test pairs, all fail without their control.
 
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
 chain fixture now also lists its 4 namespaces), and the noise
@@ -335,3 +340,10 @@ What was learned:
 - Keeping a list in data time can cost more than the feature. Sorting a detection's
   records again on every new one made the bench a third slower; one finding held 479
   records. It now sorts only when a record arrives late.
+- Every place that compares two times needs the same rule for a tie. A change record at
+  the same second as a snapshot counted after the snapshot when the snapshot came first,
+  and before it when the record came first. So a path to sensitive data showed in one
+  arrival order and not in the other. The 720 orders held no two inputs at one time. A
+  review found this fault with such an input, and found two more order faults: a failed
+  export that an older good one cleared, and a refused snapshot that read as applied
+  when it was sent again.
