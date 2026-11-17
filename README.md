@@ -149,6 +149,30 @@ path rules cross that edge unless the answer is denied.
   The k8s export now lists namespaces too, because a `namespaceSelector` reads namespace
   labels.
 
+A path that a NetworkPolicy closes still gets a finding. "Denied" holds only if the
+cluster's network plugin enforces policy, and the model cannot see the plugin. The rule
+loader gives each path rule that tests the edge's answer a twin: `PATH-AI-001-NP` and
+`PATH-AI-002-NP`. A twin finds the same path, but only where the edge says denied.
+
+- Its finding has severity low, and its title ends "held back only by NetworkPolicy".
+  One note names the network plugin. A second note names the source address that the
+  pod sees.
+- Its finding ID is not the open path's ID, so the two findings never merge. When the
+  policy goes, the `-NP` finding resolves and the open path finding opens again with its
+  old ID. When the policy comes back, the reverse happens.
+- An edge that says "not evaluated" keeps the open path finding and gives no `-NP`
+  finding.
+- The loader accepts only two tests of the edge's answer: `ne denied` and `eq denied`.
+  It refuses any other test, such as `eq allowed`, because that test would read "not
+  evaluated" as closed. It also refuses a twin for a rule that tests two edges, because
+  the twin's meaning is not defined for that rule.
+
+`reach` exits 0 for allowed, 1 for denied and 2 for not evaluated. It exits 3 when it has
+no answer: a pod that the model does not hold, a pod name or port that it cannot read, an
+option that it does not know, or a model file that it cannot open. It writes the reason
+to stderr. Before this change every answer exited 0, and a bad pod name exited 1, which
+reads as denied.
+
 How to run it on the fixtures. `--now` and `--at` set the clock, because the data is
 from 2026-11-14.
 
@@ -185,7 +209,22 @@ N=fixtures/netpol
 .venv/bin/python -m codeguardian reach --db course.db --now 2026-11-14T10:30:00Z \
   --from client/client-7c4b --to shop/shop-web-5d8f --port 3000
 .venv/bin/python -m codeguardian reach --db course.db --now 2026-11-14T10:30:00Z \
-  --from outsider/outsider-2f9a --to shop/shop-web-5d8f --port 3000
+  --from outsider/outsider-2f9a --to shop/shop-web-5d8f --port 3000; echo "exit $?"
+```
+
+`fixtures/netpol/agents-deny.json` is the chain's Kubernetes state plus one policy: a
+default deny of ingress in namespace `agents`. With it, the chain gives
+`PATH-AI-001-NP` and no open path. The second snapshot, without the policy, swaps them:
+
+```
+.venv/bin/python -m codeguardian ingest --db np.db --now 2026-11-14T10:30:00Z --at 2026-11-14T09:55:00Z \
+  --aws-iam $F/aws/iam-wide.json --aws-buckets $F/aws/s3-buckets.json --aws-tags $F/aws/s3-tags.json \
+  --k8s $N/agents-deny.json --ai $F/ai/inventory.json
+.venv/bin/python -m codeguardian findings --db np.db --now 2026-11-14T10:30:00Z
+.venv/bin/python -m codeguardian ingest --db np.db --now 2026-11-14T10:30:00Z --at 2026-11-14T10:00:00Z \
+  --aws-iam $F/aws/iam-wide.json --aws-buckets $F/aws/s3-buckets.json --aws-tags $F/aws/s3-tags.json \
+  --k8s $F/k8s/state.json --ai $F/ai/inventory.json
+.venv/bin/python -m codeguardian findings --db np.db --now 2026-11-14T10:30:00Z
 ```
 
 To take a snapshot of your own account or cluster, use the export scripts. They run the
@@ -219,14 +258,20 @@ The least privilege the export needs:
 - Local only: `kubectl config current-context` reads the kubeconfig, and
   `git check-ignore` reads the repository.
 
-Measured on 2026-11-16, the tests at commit `ac74ec0` and the speed at `dd2dff1`:
+Measured on 2026-11-17 on the `v2/netpol-shadow` branch, except the M1 speed, which was
+measured at `dd2dff1`:
 
-- 200 tests pass (25 for v1, 175 for v2, of which 53 are for NetworkPolicy). The
-  mutation run removes 158 controls one at a time and runs the tests that name each one:
-  210 mutant-test pairs, 145 distinct tests, all fail without their control. One case, a
-  pod running as a different service account, has no mutant of its own; that edge is
-  absent from the input itself. In the NetworkPolicy tests every parametrized case has a
-  mutant of its own, and the run fails if one does not.
+- 219 tests pass (25 for v1, 194 for v2; 53 are for NetworkPolicy and 19 for paths that
+  only a policy closes and for the exit codes of `reach`). The mutation run removes 179
+  controls one at a time and runs the tests that name each one: 256 mutant-test pairs,
+  164 distinct test cases, all fail without their control. One case, a pod running as a
+  different service account, has no mutant of its own; that edge is absent from the
+  input itself. In the NetworkPolicy and `-NP` tests every parametrized case has a mutant
+  of its own, and the run fails if one does not.
+- On the chain with `agents-deny.json`, `findings` lists one open `PATH-AI-001-NP`
+  finding and no open path. After the snapshot without the policy, it lists
+  `PATH-AI-001` open with the ID it had before the policy, and the `-NP` finding
+  resolved.
 - On the course layout (3 namespaces, 3 pods, 1 Service, 2 policies), `reach` answers
   allowed for `client` to `shop` on TCP 3000 and denied for `outsider`. The Service's
   edge answers denied for a connection from outside the cluster.
@@ -236,6 +281,10 @@ Measured on 2026-11-16, the tests at commit `ac74ec0` and the speed at `dd2dff1`
   3.12.14, three runs: 5,969 to 6,527 events per second; per event p50 0.10 to 0.11 ms,
   p95 0.38 to 0.45 ms, max 6.6, 11.4 and 7.1 ms. The chain incident held the same seven
   rules as in a run without noise, and the path finding ended resolved.
+- The `-NP` twins double the number of path rules that run on each change. In a cloud
+  container (x86_64 Linux, Python 3.12.3), three runs each: 2,976 to 3,040 events per
+  second with the twins, and 2,963 to 3,179 without them (branch `v2/netpol`). Each
+  chain incident held the same seven rules.
 
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
 chain fixture now also lists its 4 namespaces), and the noise
@@ -267,3 +316,8 @@ What was learned:
   unread input "not evaluated" gave a deny instead. Input the fixtures did not hold found
   six faults; one was a pod on the host network that read as denied when it was the
   source. Each guard and fault now has a test and a mutant.
+- An exit code is an answer. Python exits 1 when an error escapes, and the argument
+  parser exits 2 for a usage error. Once `reach` gave 1 to denied and 2 to not evaluated,
+  a model file that could not be opened would have read as denied, and an unknown option
+  as not evaluated. Every way out that is not an answer now exits 3, and a test checks
+  each of them.

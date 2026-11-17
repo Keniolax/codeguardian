@@ -57,6 +57,7 @@ NOT_EVAL_TEST = "test_policy_that_is_not_evaluated_keeps_the_open_path_and_gives
 TWIN_TEST = "test_loader_gives_each_gated_path_rule_one_twin_after_it"
 FORM_TEST = "test_loader_refuses_a_networkpolicy_test_that_could_read_not_evaluated_as_closed"
 FORMS = ("eq-allowed", "in-allowed", "ne-not-evaluated", "nonempty")
+CLI_NP_TEST = "test_findings_list_the_np_finding_and_the_swap_from_the_command_line"
 
 
 MUTANTS = [
@@ -614,10 +615,12 @@ MUTANTS = [
      [T("test_rule_loader_refuses_an_edge_attr_it_does_not_know", NET)]),
     ("reach usage errors exit 2, which reads as not evaluated", CLI, "    p.error = _no_answer(p)\n", "",
      [T("test_reach_usage_errors_exit_3_not_2", SHADOW), T("test_reach_refuses_a_pod_or_port_it_cannot_name", NET)]),
+    ("an option reach does not know exits 2", "src/codeguardian/cli.py", "        v2_cli.refuse_extra(a, extra)\n", "",
+     [T("test_reach_usage_errors_exit_3_not_2", SHADOW)]),
     # Paths that only a NetworkPolicy closes (slice netpol-shadow).
     ("no -NP twin derived", RULES, "            for r in (rule, shadow(rule)):", "            for r in (rule, None):",
      [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW), T(NOT_EVAL_TEST, SHADOW),
-                                                         T(TWIN_TEST, SHADOW)]),
+                                                         T(TWIN_TEST, SHADOW), T(CLI_NP_TEST, SHADOW)]),
     ("PATH-AI-002 drops its NetworkPolicy condition", V2 + "rules/paths.toml",
      '# As in PATH-AI-001: only a NetworkPolicy deny closes this hop.\n'
      'edge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]\n',
@@ -641,7 +644,7 @@ MUTANTS = [
      '    hops = copy.deepcopy(rule["hops"][:gated[0] + 1])',
      [T("test_np_finding_needs_every_other_hop_of_its_path", SHADOW), T(TWIN_TEST, SHADOW)]),
     ("rule notes not put on its findings", V2 + "paths.py", '        notes = set(rule.get("notes", []))',
-     "        notes = set()", [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES]),
+     "        notes = set()", [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(CLI_NP_TEST, SHADOW)]),
     ("any test of ingress_from_outside accepted", RULES, "                    _need(c in (GATE, HELD_BACK), rule,",
      "                    _need(True, rule,", [T(f"{FORM_TEST}[{f}]", SHADOW) for f in FORMS]),
     ("only the op of an ingress_from_outside test checked", RULES,

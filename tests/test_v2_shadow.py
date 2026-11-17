@@ -11,11 +11,12 @@ import json
 import pytest
 
 from codeguardian.cli import main as cli
+from codeguardian.v2 import render
 from codeguardian.v2.rules import RULES_DIR, SHADOW_NOTES, RuleError, load_rules, shadow, validate
 from codeguardian.v2.schema import edge_id, ts
 from codeguardian.v2.store import Store
 from test_v2_netpol import DENY, EVERY, LAYOUT, allow
-from v2_helpers import FINANCE, NOW, POD, SNAPSHOT_AT, SVC, build, fixture
+from v2_helpers import FINANCE, FX, NOW, POD, SNAPSHOT_AT, SVC, build, fixture
 
 SUFFIX = ", held back only by NetworkPolicy"
 UNREADABLE_TAGS = {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}
@@ -132,6 +133,33 @@ def test_np_finding_needs_every_other_hop_of_its_path(tmp_path):
     # Control: the bucket tagged sensitive.
     store, _ = _chain(tmp_path, "sensitive", DENY)
     assert len(_open(store, "PATH-AI-001-NP")) == 1
+
+
+DENY_FIXTURE = LAYOUT.parent / "agents-deny.json"
+
+
+def test_findings_list_the_np_finding_and_the_swap_from_the_command_line(tmp_path, capsys):
+    expected = fixture("k8s/state.json")
+    expected["items"].append(copy.deepcopy(DENY))
+    assert json.loads(DENY_FIXTURE.read_text()) == expected  # the chain's state plus one policy
+    db, fx = str(tmp_path / "m.db"), FX
+    aws = ["--aws-iam", str(fx / "aws/iam-wide.json"), "--aws-buckets", str(fx / "aws/s3-buckets.json"),
+           "--aws-tags", str(fx / "aws/s3-tags.json"), "--ai", str(fx / "ai/inventory.json")]
+
+    def ingest(k8s, at):
+        assert cli(["ingest", "--db", db, "--now", NOW, "--at", at, "--k8s", str(k8s), *aws]) == 0
+        assert cli(["findings", "--db", db, "--now", NOW]) == 0
+        return [line for line in capsys.readouterr().out.splitlines() if "PATH-AI-001" in line]
+
+    lines = ingest(DENY_FIXTURE, SNAPSHOT_AT)
+    assert lines == ["- [open] low PATH-AI-001-NP v2: An AI agent reachable from the internet runs with an identity"
+                     " that can read sensitive data, held back only by NetworkPolicy"]
+    out = render.findings(Store(db), NOW)
+    assert "  note: depends on the cluster's network plugin enforcing NetworkPolicy" in out.splitlines()
+    # Control: the same state without the policy, taken later. The two findings swap.
+    lines = ingest(fx / "k8s/state.json", "2026-11-14T10:00:00Z")
+    assert sorted(line.split(":")[0] for line in lines) == ["- [open] critical PATH-AI-001 v2",
+                                                             "- [resolved] low PATH-AI-001-NP v2"]
 
 
 # --- the rule loader --------------------------------------------------------------------------
@@ -285,7 +313,7 @@ def test_reach_exits_3_when_the_model_cannot_be_read(tmp_path, capsys):
 def test_reach_usage_errors_exit_3_not_2(tmp_path, capsys):
     db = _course(tmp_path, capsys, "layout")
     capsys.readouterr()
-    for args in (["--port", "abc"], ["--port", "3000", "--protocol", "ICMP"], []):
+    for args in (["--port", "abc"], ["--port", "3000", "--protocol", "ICMP"], [], ["--port", "3000", "--bogus"]):
         with pytest.raises(SystemExit) as exc:
             cli(["reach", "--db", db, "--now", NOW, "--from", "client/client-7c4b", "--to", "shop/shop-web-5d8f", *args])
         assert exc.value.code == 3, args

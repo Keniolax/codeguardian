@@ -83,6 +83,16 @@ def _no_answer(parser):
     return error
 
 
+def refuse_extra(a, extra):
+    """An option no parser knows reaches the top-level parser, whose error exits 2. For
+    reach that would read as "not evaluated", so reach exits NO_ANSWER instead."""
+    if getattr(a, "cmd", None) == "reach":
+        from .render import term
+
+        print(f"codeguardian reach: error: unrecognized arguments: {term(' '.join(extra))}", file=sys.stderr)
+        raise SystemExit(NO_ANSWER)
+
+
 def _setup(a):
     from .pipeline import Pipeline
     from .rules import load_rules
