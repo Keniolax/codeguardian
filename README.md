@@ -270,8 +270,8 @@ measured at `dd2dff1`:
   of its own, and the run fails if one does not.
 - On the chain with `agents-deny.json`, `findings` lists one open `PATH-AI-001-NP`
   finding and no open path. After the snapshot without the policy, it lists
-  `PATH-AI-001` open with the ID it had before the policy, and the `-NP` finding
-  resolved.
+  `PATH-AI-001` open with ID `5e4a4aa3`, the same ID as in the chain demo, and the
+  `-NP` finding resolved.
 - On the course layout (3 namespaces, 3 pods, 1 Service, 2 policies), `reach` answers
   allowed for `client` to `shop` on TCP 3000 and denied for `outsider`. The Service's
   edge answers denied for a connection from outside the cluster.
