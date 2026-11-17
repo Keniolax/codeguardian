@@ -188,6 +188,42 @@ N=fixtures/netpol
   --from outsider/outsider-2f9a --to shop/shop-web-5d8f --port 3000
 ```
 
+Snapshots and records can arrive in any order. Each one is ordered by the time in its
+own data, not by when it arrives.
+
+- A snapshot older than the last one applied from the same collector is refused and
+  changes nothing. `ingest` prints why and exits 3. The same snapshot a second time also
+  changes nothing. A different snapshot with the same time is refused and listed as not
+  evaluated, because which of the two held is not known. A broken export older than the
+  last good one does not mark its collector failed.
+- An IAM change record for a role the model does not hold yet waits. When a snapshot
+  brings the role, the record applies if it is newer than that snapshot.
+- A detection that needs an actor or a target the model does not hold, or an edge from a
+  collector that has never run, is held. Before, such a record read as "no match". It is
+  decided after the next snapshot, against the model as it is then, not as it was at the
+  record's time. `findings` lists the records still held.
+- The model keeps a journal of every snapshot it was given, the refused older ones
+  included, and every IAM change record. `findings --history` replays the journal into a
+  new model in memory, in data time, and prints each finding's status changes (opened,
+  resolved, reopened) with the time and the snapshot or record that caused each one. A
+  path that opened at 10:00 and closed at 10:20 shows even when the delete arrived first
+  and the live model never held the path.
+- A finding's "first seen" and "last seen" say when this model found it, so they still
+  depend on arrival order. A finding found after an older snapshot is dated no earlier
+  than the newest snapshot it rests on. The history gives the data time.
+- The journal keeps a full copy of each snapshot, so the database grows by the size of
+  each export, and `findings --history` replays all of it on each call. A held record
+  whose actor never appears stays held and is checked again after every snapshot.
+
+After the commands above, print the history, then give `ingest` an AWS export older than
+the one it holds:
+
+```
+.venv/bin/python -m codeguardian findings --db demo.db --now 2026-11-14T10:30:00Z --history
+.venv/bin/python -m codeguardian ingest --db demo.db --now 2026-11-14T10:30:00Z --at 2026-11-14T09:50:00Z \
+  --aws-iam $F/aws/iam.json --aws-buckets $F/aws/s3-buckets.json --aws-tags $F/aws/s3-tags.json
+```
+
 To take a snapshot of your own account or cluster, use the export scripts. They run the
 `aws` and `kubectl` CLIs you already have, with read calls only, and write the files the
 collectors read, with mode 0600, plus a manifest. They refuse to write inside a git work
@@ -237,6 +273,28 @@ Measured on 2026-11-16, the tests at commit `ac74ec0` and the speed at `dd2dff1`
   p95 0.38 to 0.45 ms, max 6.6, 11.4 and 7.1 ms. The chain incident held the same seven
   rules as in a run without noise, and the path finding ended resolved.
 
+Measured on 2026-11-17 at commit `691bfdd`, for the ordering of snapshots and records:
+
+- 219 tests pass (25 for v1, 194 for v2, of which 19 are for ordering). The mutation run
+  removes 198 controls one at a time: 259 mutant-test pairs, 164 distinct tests, all fail
+  without their control. It now also fails if a test in the ordering file, or one of its
+  parametrized cases, has no mutant.
+- All 720 orders of six inputs end in one model, one set of open findings and one
+  history. The inputs are the stage 1 snapshot (09:55), an AWS snapshot at 10:15 that
+  holds the policy the 10:00 put added, and four IAM change records: put at 10:00,
+  attach at 10:05, detach at 10:10, delete at 10:20. "One model" covers every live
+  entity and edge with its attrs, labels, source and times except "first seen". "One set
+  of open findings" covers every field except the first and last seen of a posture or path
+  finding. In every order the history shows the path open from 10:00 to 10:20, and the
+  detection for permissions added to the agent's role is open.
+- The same `bench` as above, on an x86_64 Linux container with Python 3.12.3, three runs
+  of each branch in turn: 2,938 to 3,176 events per second on this branch (p50 0.22 to
+  0.25 ms, p95 0.74 to 0.79 ms), and 3,204 to 3,328 on `v2/netpol` at `e96375f` (p50 0.21
+  to 0.22 ms, p95 0.71 to 0.75 ms). The chain incident held the same seven rules, and the
+  path finding ended resolved.
+- After the stage 1 snapshot the model file is 147,456 bytes, against 114,688 on
+  `v2/netpol`; the journal holds 11,235 bytes of snapshot content.
+
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
 chain fixture now also lists its 4 namespaces), and the noise
 copies the chain's own record shapes, so these numbers do not predict speed on a real
@@ -267,3 +325,13 @@ What was learned:
   unread input "not evaluated" gave a deny instead. Input the fixtures did not hold found
   six faults; one was a pod on the host network that read as denied when it was the
   source. Each guard and fault now has a test and a mutant.
+- An older snapshot must be refused, or it overwrites newer facts. But it still says
+  what held at its own time, so the history has to keep it. With refused snapshots left
+  out of the replay, two arrival orders of the same inputs give two histories; the
+  mutation run shows it.
+- Not looked at yet is not "no". A detection that walked an edge from a collector that
+  had never run found no agent behind the role and gave no alert. A record for a role the
+  model did not hold yet was dropped. Both now wait for the snapshot that can decide them.
+- Keeping a list in data time can cost more than the feature. Sorting a detection's
+  records again on every new one made the bench a third slower; one finding held 479
+  records. It now sorts only when a record arrives late.
