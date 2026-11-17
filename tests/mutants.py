@@ -69,6 +69,9 @@ NOT_BEFORE = "test_finding_found_after_an_older_snapshot_is_not_dated_before_its
 LATE_DELETE = "test_path_open_from_10_00_to_10_20_shows_in_the_history_when_the_delete_arrives_first"
 HIST_OUT = "test_findings_history_names_each_change_and_escapes_text"
 BROKEN_OLDER = "test_broken_snapshot_older_than_the_last_good_one_changes_nothing"
+AT_EITHER = "test_record_at_a_snapshots_time_counts_after_it_whichever_arrives_first"
+NEWER_FAILURE = "test_newer_failed_export_still_stands_when_an_older_snapshot_arrives_after_it"
+REFUSED_AGAIN = "test_a_refused_snapshot_sent_again_is_refused_again"
 
 
 MUTANTS = [
@@ -628,10 +631,45 @@ MUTANTS = [
     ("snapshot older than the last applied one accepted", PL, "        elif last is not None and at < last:",
      "        elif False:", [T(OLDER, ORDER), T(PER_SOURCE, ORDER), T(EVERY_ORDER, ORDER)]),
     ("repeated snapshot not recognised", PL,
-     '        if any(e["digest"] == d for e in same_time):\n            self.store.bump("snapshot_unchanged")\n',
+     '        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):\n'
+     '            self.store.bump("snapshot_unchanged")\n',
      "        if False:\n", [T(REPLAY, ORDER), T(SAME_TIME, ORDER), T(NORMALISED, ORDER), T(INGEST, ORDER)]),
-    ("other content at the same time applied", PL, "        if same_time or (last is not None and at == last):",
+    ("other content at the same time applied", PL, "        if others or (last is not None and at == last):",
      "        if False:", [T(SAME_TIME, ORDER), T(REPLAY, ORDER)]),
+    # Review of slice 2: controls that had no test, and the faults it fixed.
+    ("other content at the last applied time applied when the journal lacks it", PL,
+     "        if others or (last is not None and at == last):", "        if others:", [T(SAME_TIME, ORDER)]),
+    ("a refused snapshot sent again reads as already in the model", PL,
+     '        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):',
+     '        if any(e["digest"] == d for e in same_time):', [T(REFUSED_AGAIN, ORDER), T(REPLAY, ORDER)]),
+    ("a refused snapshot sent again conflicts with itself", PL,
+     '        others = [e for e in same_time if e["digest"] != d]', "        others = same_time",
+     [T(REFUSED_AGAIN, ORDER)]),
+    ("a record at a snapshot's time dropped when the snapshot arrives after it", V2 + "collectors/aws.py",
+     '                   if e["time"] >= at} if old else {}', '                   if e["time"] > at} if old else {}',
+     [T(AT_EITHER, ORDER)]),
+    ("a mark at a snapshot's time dropped when the snapshot arrives after it", V2 + "collectors/aws.py",
+     '                                   if m["time"] >= at] if old else []',
+     '                                   if m["time"] > at] if old else []', [T(AT_EITHER, ORDER)]),
+    ("an older good snapshot clears a newer failure", V2 + "store.py",
+     '        if ok and old and old["status"] == "failed" and old["last_attempt"] >= at:', "        if False:",
+     [T(NEWER_FAILURE, ORDER)]),
+    ("a good snapshot at the time of a failure clears it", V2 + "store.py",
+     'old["last_attempt"] >= at:', 'old["last_attempt"] > at:', [T(NEWER_FAILURE, ORDER)]),
+    ("a broken export at the time of the last good one ignored", PL,
+     "                if last is not None and at < last:", "                if last is not None and at <= last:",
+     [T(NEWER_FAILURE, ORDER)]),
+    ("a held detection decided later joins no incident", PL,
+     '                correlate.add_detection(self.store, f, ev["time"])', "                pass", [T(HELD, ORDER)]),
+    ("held records alone do not show as not evaluated", V2 + "render.py",
+     '    if held or counts.get("events_actor_null") or any(changes.values()):',
+     '    if counts.get("events_actor_null") or any(changes.values()):', [T(NEVER_RAN, ORDER)]),
+    ("a collector that ran and then failed counts as never run", V2 + "detect.py",
+     '(store.source(n) or {}).get("last_success") is None)', '(store.source(n) or {}).get("status") != "ok")',
+     [T(NEVER_RAN, ORDER)]),
+    ("refusals not shown when another collector fails in the same ingest", V2 + "cli.py",
+     '            changes = getattr(exc, "changes", None) or {',
+     '            changes = None or {', [T(INGEST, ORDER)]),
     ("snapshot time not normalised", PL, "        at = ts(at) if at else self.clock.now()",
      "        at = at or self.clock.now()", [T(NORMALISED, ORDER)]),
     ("change records wait for no snapshot", PL, "        if aws_collector.SOURCE in admitted:\n            self._apply_pending()\n",

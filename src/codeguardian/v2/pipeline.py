@@ -114,12 +114,15 @@ class Pipeline:
         Every snapshot that is not a repeat goes into the journal."""
         d = digest(content)
         same_time = self.store.snapshot_entries(source, at)
-        if any(e["digest"] == d for e in same_time):
+        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):
             self.store.bump("snapshot_unchanged")
             return "unchanged", None
+        # A snapshot refused before is refused again for the same reason: it is not in the
+        # model, so it must not read as a repeat of one that is.
+        others = [e for e in same_time if e["digest"] != d]
         health = self.store.source(source)
         last = health["last_success"] if health else None
-        if same_time or (last is not None and at == last):
+        if others or (last is not None and at == last):
             # Two different snapshots of one collector at one time: which one holds is unknown.
             verdict, reason = "conflict", (f"differs from the snapshot of {source} already taken at {at};"
                                            " which one holds is not known")

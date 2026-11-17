@@ -198,6 +198,12 @@ class Store:
 
     def record_source(self, name, ok, at, error=None):
         old = self.source(name)
+        if ok and old and old["status"] == "failed" and old["last_attempt"] >= at:
+            # An export at this time or later failed. This snapshot is older, so the failure
+            # still stands and the facts stay stale, as they would had it arrived first.
+            self.db.execute("UPDATE sources SET last_success=? WHERE name=?",
+                            (max(at, old["last_success"] or at), name))
+            return
         last_success = at if ok else (old["last_success"] if old else None)
         self.db.execute("INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?)",
                         (name, "ok" if ok else "failed", last_success, at, error))
