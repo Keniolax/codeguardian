@@ -395,10 +395,10 @@ def test_e_event_reruns_only_the_rules_its_change_can_affect(tmp_path):
     assert dict(pipe.evals) == {"DET-AI-001": 1}  # no model change, so no posture or path rule
     pipe.evals.clear()
     pipe.process(iam_event("PutRolePolicy"))
-    # One role changed: the two role rules run once, on that role; the path rule runs once;
-    # the pod rule does not run at all.
+    # One role changed: the two role rules run once, on that role; the path rules and their
+    # -NP twins run once; the pod rule does not run at all.
     assert dict(pipe.evals) == {"POST-IAM-001": 1, "POST-IAM-002": 1, "POST-IAM-003": 1, "PATH-AI-001": 1,
-                                "PATH-AI-002": 1, "DET-AI-002": 1}
+                                "PATH-AI-002": 1, "PATH-AI-001-NP": 1, "PATH-AI-002-NP": 1, "DET-AI-002": 1}
 
 
 def test_e_path_rule_reruns_only_when_a_type_it_follows_changes(tmp_path):
@@ -414,7 +414,7 @@ def test_e_path_rule_reruns_only_when_a_type_it_follows_changes(tmp_path):
     inside = Delta()
     inside.edge("has_permission")
     pipe.evaluate_delta(inside, "2026-11-14T10:00:00.000000Z")
-    assert dict(pipe.evals) == {"PATH-AI-001": 1, "PATH-AI-002": 1}
+    assert dict(pipe.evals) == {"PATH-AI-001": 1, "PATH-AI-002": 1, "PATH-AI-001-NP": 1, "PATH-AI-002-NP": 1}
 
 
 def test_e_replaying_the_same_events_changes_nothing(tmp_path):

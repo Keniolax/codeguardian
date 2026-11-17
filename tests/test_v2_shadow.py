@@ -1,0 +1,294 @@
+"""Paths that only a NetworkPolicy closes (slice netpol-shadow), and reach's exit codes.
+
+A path that a policy closes still rests on the cluster's network plugin enforcing policy,
+which the model cannot see. So it gives a low-severity `-NP` finding of its own. Each
+claim has a control: a case that differs in one fact and gives the other answer. Every
+test here, and every parametrized case, must have a mutant in tests/mutants.py."""
+
+import copy
+import json
+
+import pytest
+
+from codeguardian.cli import main as cli
+from codeguardian.v2.rules import RULES_DIR, SHADOW_NOTES, RuleError, load_rules, shadow, validate
+from codeguardian.v2.schema import edge_id, ts
+from codeguardian.v2.store import Store
+from test_v2_netpol import DENY, EVERY, LAYOUT, allow
+from v2_helpers import FINANCE, NOW, POD, SNAPSHOT_AT, SVC, build, fixture
+
+SUFFIX = ", held back only by NetworkPolicy"
+UNREADABLE_TAGS = {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}
+
+
+def _tags_unreadable(tags):
+    tags["example-finance-records"] = copy.deepcopy(UNREADABLE_TAGS)
+
+
+# rule -> the fixture edits under which the chain gives that rule's path
+CASES = {
+    "PATH-AI-001": {},
+    "PATH-AI-002": {"edit_tags": _tags_unreadable},
+}
+
+
+def _with(*items, edit=None):
+    def run(data):
+        data["items"].extend(copy.deepcopy(list(items)))
+        if edit:
+            edit(data)
+    return run
+
+
+def _chain(tmp_path, name, *items, **kw):
+    d = tmp_path / name
+    d.mkdir()
+    return build(d, edit_k8s=_with(*items), **kw)
+
+
+def _open(store, rule_id):
+    return store.findings(status="open", rule_id=rule_id)
+
+
+def _np(rule_id):
+    return rule_id + "-NP"
+
+
+def _snap(pipe, tmp_path, name, data, at):
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps(data))
+    pipe.snapshot(k8s=path, at=ts(at))  # as the CLI passes it
+
+
+# --- the -NP finding --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("rule_id", sorted(CASES))
+def test_policy_that_closes_the_path_gives_an_np_finding_instead(tmp_path, rule_id):
+    store, _ = _chain(tmp_path, "denied", DENY, **CASES[rule_id])
+    assert store.edge(edge_id("exposes", SVC, POD))["attrs"]["ingress_from_outside"] == "denied"
+    assert _open(store, rule_id) == []
+    (held,) = _open(store, _np(rule_id))
+    # Control: without the policy the same walk is the open path, and there is no -NP finding.
+    plain, _ = _chain(tmp_path, "plain", **CASES[rule_id])
+    (path,) = _open(plain, rule_id)
+    assert plain.findings(rule_id=_np(rule_id)) == []
+    assert held["finding_id"] != path["finding_id"]
+    assert (held["kind"], held["severity"], held["title"]) == ("path", "low", path["title"] + SUFFIX)
+    assert (held["path"], held["primary_entity"], held["entities"]) == (path["path"], path["primary_entity"],
+                                                                         path["entities"])
+    assert set(SHADOW_NOTES) <= set(held["notes"])
+    assert not set(SHADOW_NOTES) & set(path["notes"])
+    assert "depends on the cluster's network plugin enforcing NetworkPolicy" in held["notes"]
+
+
+def test_removing_and_restoring_the_policy_swaps_the_two_findings(tmp_path):
+    store, pipe = build(tmp_path)
+    (before,) = _open(store, "PATH-AI-001")
+    plain = fixture("k8s/state.json")
+    denied = copy.deepcopy(plain)
+    denied["items"].append(copy.deepcopy(DENY))
+
+    _snap(pipe, tmp_path, "denied", denied, "2026-11-14T10:00:00Z")
+    (held,) = _open(store, "PATH-AI-001-NP")
+    assert _open(store, "PATH-AI-001") == []
+    assert store.finding(before["finding_id"])["status"] == "resolved"
+
+    _snap(pipe, tmp_path, "plain", plain, "2026-11-14T10:05:00Z")
+    (after,) = _open(store, "PATH-AI-001")
+    assert _open(store, "PATH-AI-001-NP") == []
+    assert store.finding(held["finding_id"])["status"] == "resolved"
+    assert (after["finding_id"], after["first_seen"]) == (before["finding_id"], before["first_seen"])
+
+    _snap(pipe, tmp_path, "denied-again", denied, "2026-11-14T10:10:00Z")
+    (again,) = _open(store, "PATH-AI-001-NP")
+    assert _open(store, "PATH-AI-001") == []
+    assert (again["finding_id"], again["first_seen"]) == (held["finding_id"], held["first_seen"])
+    assert again["last_seen"] == "2026-11-14T10:10:00.000000Z"
+
+
+def test_policy_that_is_not_evaluated_keeps_the_open_path_and_gives_no_np_finding(tmp_path):
+    def selecting(expr):
+        return allow("p", EVERY, {"matchExpressions": [expr]})
+
+    store, _ = _chain(tmp_path, "unknown", DENY, selecting({"key": "app", "operator": "Gt", "values": ["1"]}))
+    assert store.edge(edge_id("exposes", SVC, POD))["attrs"]["ingress_from_outside"] == "not evaluated"
+    (f,) = _open(store, "PATH-AI-001")
+    assert any("operator 'Gt'" in n for n in f["notes"])
+    assert store.findings(rule_id="PATH-AI-001-NP") == []
+    # Control: the same allow with an operator that is read, and selects another pod.
+    store, _ = _chain(tmp_path, "known", DENY, selecting({"key": "app", "operator": "In", "values": ["report-builder"]}))
+    assert _open(store, "PATH-AI-001") == []
+    assert len(_open(store, "PATH-AI-001-NP")) == 1
+
+
+def test_np_finding_needs_every_other_hop_of_its_path(tmp_path):
+    # The twin walks every other hop as its rule does: no sensitive bucket, no -NP finding.
+    def internal(tags):
+        tags["example-finance-records"]["TagSet"][0]["Value"] = "internal"
+
+    store, _ = _chain(tmp_path, "internal", DENY, edit_tags=internal)
+    assert store.findings(rule_id="PATH-AI-001-NP") == []
+    assert store.entity(FINANCE)["attrs"]["sensitive"] is False
+    # Control: the bucket tagged sensitive.
+    store, _ = _chain(tmp_path, "sensitive", DENY)
+    assert len(_open(store, "PATH-AI-001-NP")) == 1
+
+
+# --- the rule loader --------------------------------------------------------------------------
+
+def _gated(*gates):
+    hops = [{"edge": "reachable_from", "dir": "in", "to": "service"}]
+    for n, gate in enumerate(gates):
+        hop = {"edge": "exposes", "dir": "out" if n % 2 == 0 else "in", "to": "pod" if n % 2 == 0 else "service"}
+        if gate is not None:
+            hop["edge_where"] = [gate]
+        hops.append(hop)
+    return {"id": "T-1", "version": 3, "kind": "path", "severity": "high", "title": "t", "frameworks": [],
+            "start": "internet", "hops": hops}
+
+
+GATE = {"attr": "ingress_from_outside", "op": "ne", "value": "denied"}
+
+
+def test_loader_gives_each_gated_path_rule_one_twin_after_it():
+    rules = load_rules()
+    ids = [r["id"] for r in rules]
+    for base in ("PATH-AI-001", "PATH-AI-002"):
+        assert ids[ids.index(base) + 1] == _np(base)
+        rule, twin = rules[ids.index(base)], rules[ids.index(base) + 1]
+        assert (twin["severity"], twin["version"], twin["frameworks"]) == ("low", rule["version"], [])
+        flipped = copy.deepcopy(rule["hops"])
+        flipped[1]["edge_where"] = [{"attr": "ingress_from_outside", "op": "eq", "value": "denied"}]
+        assert twin["hops"] == flipped
+    twin = shadow(validate(_gated(GATE)))
+    assert twin["id"] == "T-1-NP" and twin["hops"][1]["edge_where"][0]["op"] == "eq"
+    # Control: a path rule that does not test NetworkPolicy, and a posture rule, get none.
+    assert shadow(validate(_gated(None))) is None
+    assert not [r for r in rules if r["kind"] != "path" and r["id"].endswith("-NP")]
+    assert len([i for i in ids if i.endswith("-NP")]) == len([r for r in rules if r["kind"] == "path"]) // 2
+
+
+@pytest.mark.parametrize("form", ["eq-allowed", "in-allowed", "ne-not-evaluated", "nonempty"])
+def test_loader_refuses_a_networkpolicy_test_that_could_read_not_evaluated_as_closed(form):
+    bad = {"eq-allowed": {"op": "eq", "value": "allowed"}, "in-allowed": {"op": "in", "value": ["allowed"]},
+           "ne-not-evaluated": {"op": "ne", "value": "not evaluated"}, "nonempty": {"op": "nonempty"}}[form]
+    with pytest.raises(RuleError, match="may be tested only as ne denied or eq denied"):
+        validate(_gated({"attr": "ingress_from_outside", **bad}))
+    # Control: the two forms that keep "not evaluated" open.
+    validate(_gated(GATE))
+    validate(_gated({"attr": "ingress_from_outside", "op": "eq", "value": "denied"}))
+
+
+def test_loader_refuses_a_twin_for_a_rule_with_two_gates():
+    with pytest.raises(RuleError, match="2 hops test ingress_from_outside"):
+        shadow(validate(_gated(GATE, GATE)))
+    # Control: two exposes hops, one of them gated.
+    assert shadow(validate(_gated(GATE, None)))["id"] == "T-1-NP"
+
+
+def test_loader_refuses_a_hand_written_rule_with_a_twin_id(tmp_path):
+    text = (RULES_DIR / "paths.toml").read_text()
+    clash = text + '\n[[rule]]\nid = "PATH-AI-001-NP"\nversion = 1\nkind = "posture"\nseverity = "low"\n' \
+                   'title = "t"\nframeworks = []\nentity = "pod"\nwhere = [{ attr = "privileged", op = "eq", value = true }]\n'
+    (tmp_path / "paths.toml").write_text(clash)
+    with pytest.raises(RuleError, match="duplicate rule id PATH-AI-001-NP"):
+        load_rules(tmp_path)
+    # Control: the same rule under another ID loads.
+    (tmp_path / "paths.toml").write_text(clash.replace('id = "PATH-AI-001-NP"', 'id = "POST-T-001"'))
+    assert "POST-T-001" in [r["id"] for r in load_rules(tmp_path)]
+
+
+# --- reach: one exit code per answer ----------------------------------------------------------
+
+def _course(tmp_path, capsys, name, *extra, drop_policies=False):
+    data = json.loads(LAYOUT.read_text())
+    if drop_policies:
+        data["items"] = [i for i in data["items"] if i["kind"] != "NetworkPolicy"]
+    data["items"].extend(copy.deepcopy(list(extra)))
+    path = tmp_path / f"{name}.json"
+    path.write_text(json.dumps(data))
+    db = str(tmp_path / f"{name}.db")
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", SNAPSHOT_AT, "--cluster", "course", "--k8s", str(path)]) == 0
+    capsys.readouterr()
+    return db
+
+
+def _reach(db, src, dst="shop/shop-web-5d8f", port="3000"):
+    return cli(["reach", "--db", db, "--now", NOW, "--from", src, "--to", dst, "--port", port])
+
+
+def test_reach_exits_0_for_allowed(tmp_path, capsys):
+    db = _course(tmp_path, capsys, "layout")
+    assert _reach(db, "client/client-7c4b") == 0
+    assert capsys.readouterr().out.startswith("allowed: ")
+    # Control: the same pods on a port no rule allows.
+    assert _reach(db, "client/client-7c4b", port="3001") == 1
+    assert capsys.readouterr().out.startswith("denied: ")
+
+
+def test_reach_exits_1_for_denied(tmp_path, capsys):
+    db = _course(tmp_path, capsys, "layout")
+    assert _reach(db, "outsider/outsider-2f9a") == 1
+    assert capsys.readouterr().out.startswith("denied: ")
+    # Control: the layout without its two policies.
+    db = _course(tmp_path, capsys, "open", drop_policies=True)
+    assert _reach(db, "outsider/outsider-2f9a") == 0
+
+
+def test_reach_exits_2_for_not_evaluated(tmp_path, capsys):
+    unknown = allow("unknown", EVERY, {"matchExpressions": [{"key": "app", "operator": "Gt", "values": ["1"]}]},
+                    ns="shop")
+    db = _course(tmp_path, capsys, "unknown", unknown)
+    assert _reach(db, "outsider/outsider-2f9a") == 2
+    out = capsys.readouterr().out
+    assert out.startswith("not evaluated: ") and "operator 'Gt'" in out
+    # Control: the same policy with an operator that is read, selecting another pod.
+    known = allow("unknown", EVERY, {"matchExpressions": [{"key": "app", "operator": "In", "values": ["other"]}]},
+                  ns="shop")
+    db = _course(tmp_path, capsys, "known", known)
+    assert _reach(db, "outsider/outsider-2f9a") == 1
+
+
+def test_reach_exits_3_for_a_pod_not_in_the_model(tmp_path, capsys):
+    db = _course(tmp_path, capsys, "layout")
+    capsys.readouterr()
+    for src, dst in (("client/nobody", "shop/shop-web-5d8f"), ("client/client-7c4b", "shop/nobody"),
+                     ("elsewhere/client-7c4b", "shop/shop-web-5d8f")):
+        assert _reach(db, src, dst) == 3, (src, dst)
+        out = capsys.readouterr()
+        assert out.out == "" and "is not in the model" in out.err, (src, dst)
+    # An empty model holds no pod at all.
+    assert _reach(str(tmp_path / "empty.db"), "client/client-7c4b") == 3
+    assert "is not in the model" in capsys.readouterr().err
+    # A pod the last snapshot no longer lists is not in the model either.
+    data = json.loads(LAYOUT.read_text())
+    data["items"] = [i for i in data["items"] if i["metadata"]["name"] != "client-7c4b"]
+    (tmp_path / "gone.json").write_text(json.dumps(data))
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", "2026-11-14T10:00:00Z", "--cluster", "course",
+                "--k8s", str(tmp_path / "gone.json")]) == 0
+    capsys.readouterr()
+    assert _reach(db, "client/client-7c4b") == 3
+    # Control: a pod the model holds gets an answer.
+    assert _reach(db, "outsider/outsider-2f9a") == 1
+
+
+def test_reach_exits_3_when_the_model_cannot_be_read(tmp_path, capsys):
+    (tmp_path / "junk.db").write_bytes(b"not a database, " * 64)
+    for db in (str(tmp_path / "no-such-dir" / "m.db"), str(tmp_path / "junk.db")):
+        assert _reach(db, "client/client-7c4b") == 3, db
+        out = capsys.readouterr()
+        assert out.out == "" and out.err.startswith("no answer: "), db
+    # Control: a model that can be read gives an answer.
+    assert _reach(_course(tmp_path, capsys, "layout"), "client/client-7c4b") == 0
+
+
+def test_reach_usage_errors_exit_3_not_2(tmp_path, capsys):
+    db = _course(tmp_path, capsys, "layout")
+    capsys.readouterr()
+    for args in (["--port", "abc"], ["--port", "3000", "--protocol", "ICMP"], []):
+        with pytest.raises(SystemExit) as exc:
+            cli(["reach", "--db", db, "--now", NOW, "--from", "client/client-7c4b", "--to", "shop/shop-web-5d8f", *args])
+        assert exc.value.code == 3, args
+        assert "error:" in capsys.readouterr().err
+    # Control: the same command with a port gives the answer.
+    assert _reach(db, "client/client-7c4b") == 0

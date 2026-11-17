@@ -469,10 +469,11 @@ def test_reach_prints_each_answer_and_escapes_policy_text(tmp_path, capsys):
     db = str(tmp_path / "m.db")
     assert cli(["ingest", "--db", db, "--now", NOW, "--at", SNAPSHOT_AT, "--cluster", "course", "--k8s", str(path)]) == 0
     capsys.readouterr()
-    answers = {}
+    answers, codes = {}, {}
     for src in ("client/client-7c4b", "outsider/outsider-2f9a"):
-        assert cli(["reach", "--db", db, "--now", NOW, "--from", src, "--to", "shop/shop-web-5d8f", "--port", "3000"]) == 0
+        codes[src] = cli(["reach", "--db", db, "--now", NOW, "--from", src, "--to", "shop/shop-web-5d8f", "--port", "3000"])
         answers[src] = capsys.readouterr().out
+    assert codes == {"client/client-7c4b": 0, "outsider/outsider-2f9a": 2}
     assert answers["client/client-7c4b"].startswith("allowed: client/client-7c4b -> shop/shop-web-5d8f on TCP 3000\n")
     # The hostile policy may apply and allows everything, so the outsider's answer is not known.
     assert answers["outsider/outsider-2f9a"].startswith("not evaluated: ")
@@ -492,16 +493,19 @@ def test_reach_refuses_a_pod_or_port_it_cannot_name(tmp_path, capsys):
     assert cli(["ingest", "--db", db, "--now", NOW, "--at", SNAPSHOT_AT, "--cluster", "course",
                 "--k8s", str(LAYOUT)]) == 0
     base = ["reach", "--db", db, "--now", NOW, "--to", "shop/shop-web-5d8f"]
+    capsys.readouterr()
+    # Each refusal exits 3, "no answer": not 1, which reads as denied, nor 2, "not evaluated".
     for ref in ("client-7c4b", "course/client/client-7c4b", "client/"):
-        with pytest.raises(SystemExit, match="give a pod as NAMESPACE/NAME"):
-            cli([*base, "--from", ref, "--port", "3000"])
+        assert cli([*base, "--from", ref, "--port", "3000"]) == 3
+        out = capsys.readouterr()
+        assert "give a pod as NAMESPACE/NAME" in out.err and out.out == ""
     for port in ("0", "65536", "-1"):
         with pytest.raises(SystemExit) as exc:
             cli([*base, "--from", "client/client-7c4b", "--port", port])
-        assert exc.value.code == 2
+        assert exc.value.code == 3
         assert "is not a port number" in capsys.readouterr().err
     # Control: a pod named as NAMESPACE/NAME and the highest port get an answer.
-    assert cli([*base, "--from", "client/client-7c4b", "--port", "65535"]) == 0
+    assert cli([*base, "--from", "client/client-7c4b", "--port", "65535"]) == 1
     assert capsys.readouterr().out.startswith("denied: client/client-7c4b -> shop/shop-web-5d8f on TCP 65535\n")
 
 

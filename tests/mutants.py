@@ -7,8 +7,9 @@ each named test on its own, and restores the file. A mutant counts as caught onl
 pytest exits with code 1 (tests failed). Exit code 2 or more means the mutant broke
 collection or imports, which proves nothing, so it is reported as broken. The run fails
 if any mutant survives or breaks, if the tree is not clean afterwards, or if a test whose
-name starts with test_a_ to test_f_, or any test in the export or NetworkPolicy files, has no
-mutant. In the NetworkPolicy file every parametrized case must also have a mutant of its own.
+name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy or -NP files,
+has no mutant. In the NetworkPolicy and -NP files every parametrized case must also have a
+mutant of its own.
 """
 
 import ast
@@ -28,6 +29,9 @@ EXPORT = "src/codeguardian/export/__init__.py"
 NET = "tests/test_v2_netpol.py"
 NP = V2 + "netpol.py"
 K8S = V2 + "collectors/k8s.py"
+SHADOW = "tests/test_v2_shadow.py"
+RULES = V2 + "rules.py"
+CLI = V2 + "cli.py"
 
 
 def T(name, file=CHAIN):
@@ -46,6 +50,13 @@ IPBLOCK_TEST = "test_ipblock_of_every_address_opens_the_path_and_excepting_the_s
 PORT_TEST = "test_allow_on_another_port_or_protocol_does_not_open_the_path"
 LAYOUT_TEST = "test_course_layout_client_reaches_the_shop_and_outsider_and_internet_do_not"
 PEER_TEST = "test_pod_selector_alone_means_the_policy_namespace_and_both_selectors_must_match"
+NP_TEST = "test_policy_that_closes_the_path_gives_an_np_finding_instead"
+NP_RULES = ("PATH-AI-001", "PATH-AI-002")
+SWAP_TEST = "test_removing_and_restoring_the_policy_swaps_the_two_findings"
+NOT_EVAL_TEST = "test_policy_that_is_not_evaluated_keeps_the_open_path_and_gives_no_np_finding"
+TWIN_TEST = "test_loader_gives_each_gated_path_rule_one_twin_after_it"
+FORM_TEST = "test_loader_refuses_a_networkpolicy_test_that_could_read_not_evaluated_as_closed"
+FORMS = ("eq-allowed", "in-allowed", "ne-not-evaluated", "nonempty")
 
 
 MUTANTS = [
@@ -382,7 +393,8 @@ MUTANTS = [
      '# keeps the path open.\nedge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]\n',
      "# keeps the path open.\n",
      [T(f"{DENY_TEST}[empty-selector]", NET),
-      T("test_allow_for_a_namespace_label_does_not_open_the_path_from_the_internet", NET)]),
+      T("test_allow_for_a_namespace_label_does_not_open_the_path_from_the_internet", NET),
+      T(f"{NP_TEST}[PATH-AI-001]", SHADOW)]),
     ("not evaluated closes the path as a deny would", V2 + "rules/paths.toml",
      '# keeps the path open.\nedge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]',
      '# keeps the path open.\nedge_where = [{ attr = "ingress_from_outside", op = "eq", value = "allowed" }]',
@@ -600,6 +612,60 @@ MUTANTS = [
     ("edge_where that is not a list accepted", V2 + "rules.py",
      '            _need(isinstance(h.get("edge_where", []), list), rule, "edge_where must be a list")\n', "",
      [T("test_rule_loader_refuses_an_edge_attr_it_does_not_know", NET)]),
+    ("reach usage errors exit 2, which reads as not evaluated", CLI, "    p.error = _no_answer(p)\n", "",
+     [T("test_reach_usage_errors_exit_3_not_2", SHADOW), T("test_reach_refuses_a_pod_or_port_it_cannot_name", NET)]),
+    # Paths that only a NetworkPolicy closes (slice netpol-shadow).
+    ("no -NP twin derived", RULES, "            for r in (rule, shadow(rule)):", "            for r in (rule, None):",
+     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW), T(NOT_EVAL_TEST, SHADOW),
+                                                         T(TWIN_TEST, SHADOW)]),
+    ("PATH-AI-002 drops its NetworkPolicy condition", V2 + "rules/paths.toml",
+     '# As in PATH-AI-001: only a NetworkPolicy deny closes this hop.\n'
+     'edge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]\n',
+     "# As in PATH-AI-001: only a NetworkPolicy deny closes this hop.\n", [T(f"{NP_TEST}[PATH-AI-002]", SHADOW)]),
+    ("twin keeps its rule's severity", RULES, '"severity": SHADOW_SEVERITY,', '"severity": rule["severity"],',
+     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(TWIN_TEST, SHADOW)]),
+    ("twin title not marked", RULES, "\"title\": f\"{rule['title']}, held back only by NetworkPolicy\",",
+     '"title": rule["title"],', [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES]),
+    ("twin keeps the gate, so it repeats its rule", RULES,
+     '    hop["edge_where"] = [HELD_BACK if c == GATE else c for c in hop["edge_where"]]',
+     '    hop["edge_where"] = list(hop["edge_where"])',
+     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW), T(TWIN_TEST, SHADOW)]),
+    ("twin drops the gate, so it also fires on an open path", RULES,
+     '    hop["edge_where"] = [HELD_BACK if c == GATE else c for c in hop["edge_where"]]',
+     '    hop["edge_where"] = [c for c in hop["edge_where"] if c != GATE]',
+     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW)]),
+    ("not evaluated read as held back by policy", RULES,
+     'HELD_BACK = {"attr": "ingress_from_outside", "op": "eq", "value": "denied"}',
+     'HELD_BACK = {"attr": "ingress_from_outside", "op": "ne", "value": "allowed"}', [T(NOT_EVAL_TEST, SHADOW)]),
+    ("twin walks only up to the gated hop", RULES, '    hops = copy.deepcopy(rule["hops"])',
+     '    hops = copy.deepcopy(rule["hops"][:gated[0] + 1])',
+     [T("test_np_finding_needs_every_other_hop_of_its_path", SHADOW), T(TWIN_TEST, SHADOW)]),
+    ("rule notes not put on its findings", V2 + "paths.py", '        notes = set(rule.get("notes", []))',
+     "        notes = set()", [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES]),
+    ("any test of ingress_from_outside accepted", RULES, "                    _need(c in (GATE, HELD_BACK), rule,",
+     "                    _need(True, rule,", [T(f"{FORM_TEST}[{f}]", SHADOW) for f in FORMS]),
+    ("only the op of an ingress_from_outside test checked", RULES,
+     "                    _need(c in (GATE, HELD_BACK), rule,", '                    _need(c["op"] in ("ne", "eq"), rule,',
+     [T(f"{FORM_TEST}[{f}]", SHADOW) for f in ("eq-allowed", "ne-not-evaluated")]),
+    ("rule with two gates given a twin", RULES, "    _need(len(gated) == 1, rule,", "    _need(True, rule,",
+     [T("test_loader_refuses_a_twin_for_a_rule_with_two_gates", SHADOW)]),
+    ("twin may take the ID of a hand-written rule", RULES,
+     '                if r["id"] in seen:\n                    raise', "                if False:\n                    raise",
+     [T("test_loader_refuses_a_hand_written_rule_with_a_twin_id", SHADOW)]),
+    # reach: one exit code per answer, and none that a failure could share.
+    ("reach exits 0 for every answer", CLI, "    return REACH_EXIT.get(answer, NO_ANSWER)", "    return 0",
+     [T("test_reach_exits_0_for_allowed", SHADOW), T("test_reach_exits_1_for_denied", SHADOW),
+      T("test_reach_exits_2_for_not_evaluated", SHADOW)]),
+    ("allowed exits as denied", CLI, '{"allowed": 0,', '{"allowed": 1,', [T("test_reach_exits_0_for_allowed", SHADOW)]),
+    ("denied exits as allowed", CLI, '"denied": 1,', '"denied": 0,',
+     [T("test_reach_exits_1_for_denied", SHADOW), T("test_reach_exits_0_for_allowed", SHADOW)]),
+    ("not evaluated exits as allowed", CLI, '"not evaluated": 2}', '"not evaluated": 0}',
+     [T("test_reach_exits_2_for_not_evaluated", SHADOW)]),
+    ("pod not in the model asked anyway", CLI, "            if store.entity(pid) is None:", "            if False:",
+     [T("test_reach_exits_3_for_a_pod_not_in_the_model", SHADOW)]),
+    ("reach lets an error escape, which exits 1 (denied)", CLI,
+     '    except Exception as exc:  # any failure is "no answer", never an answer',
+     "    except ZeroDivisionError as exc:", [T("test_reach_exits_3_when_the_model_cannot_be_read", SHADOW)]),
 ]
 
 
@@ -613,7 +679,7 @@ def chain_tests():
     """Tests that must each have a mutant: A to F in the chain file, and every export test."""
     out = []
     for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True),
-                       (NET, lambda n: True)):
+                       (NET, lambda n: True), (SHADOW, lambda n: True)):
         tree = ast.parse((ROOT / file).read_text())
         out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name.startswith("test_") and keep(n.name)]
@@ -639,11 +705,11 @@ def main():
     named = {node for *_, tests in MUTANTS for node in tests}
     env = dict(os.environ, PYTHONPATH="src", PYTHONDONTWRITEBYTECODE="1")
     collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN,
-                                NET], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
-    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET)) and n not in named]
+                                NET, SHADOW], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
+    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW)) and n not in named]
     for n in loose:
         print(f"parametrized case with no mutant of its own: {n}")
-    if any(n.startswith(NET) for n in loose):
+    if any(n.startswith((NET, SHADOW)) for n in loose):
         return 1
     nodes = sorted(named)
     baseline = [n for n in nodes if pytest(n) != 0]
@@ -671,7 +737,8 @@ def main():
         print(f"{verdict:<10} {name:<{width}}  {node}")
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
-          f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export and NetworkPolicy tests, all covered")
+          f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy"
+          " and -NP tests, all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")
         return 1

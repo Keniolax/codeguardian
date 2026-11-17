@@ -1,5 +1,6 @@
 """Path rules: a fixed sequence of typed hops, walked depth-first from every live entity of
-the start type. Each complete walk is one finding.
+the start type. Each complete walk is one finding. A rule's own notes go on each of its
+findings (the `-NP` twins in rules.py carry theirs this way).
 
 The rule loader caps a rule at MAX_HOPS hops, so every walk is bounded. A node is never
 entered twice in one walk, so a rule whose hops lead back to a node it passed (out over
@@ -64,7 +65,7 @@ def evaluate(store, rule, now):
 
     out = []
     for nodes, edges, extra in found:
-        notes = set()
+        notes = set(rule.get("notes", []))
         for e in edges:
             notes.update(e["attrs"].get("not_evaluated", []))
             if e["type"] == "has_permission":

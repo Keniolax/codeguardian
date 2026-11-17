@@ -9,6 +9,10 @@ from pathlib import Path
 
 COMMANDS = ("ingest", "watch", "findings", "incidents", "plan", "explain", "ask", "reach", "bench")
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "chain"
+# reach's exit codes. Nothing that is not an answer exits 0, 1 or 2, so a script cannot
+# read a failure or "not evaluated" as an answer.
+REACH_EXIT = {"allowed": 0, "denied": 1, "not evaluated": 2}
+NO_ANSWER = 3
 
 
 def add_subcommands(sub):
@@ -54,7 +58,10 @@ def add_subcommands(sub):
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
     p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
 
-    p = common(sub.add_parser("reach", help="whether NetworkPolicy lets one pod connect to another"))
+    p = common(sub.add_parser("reach", help="whether NetworkPolicy lets one pod connect to another",
+                              epilog="exit status: 0 allowed, 1 denied, 2 not evaluated, 3 no answer (a pod or"
+                                     " port the model does not hold, or a model that could not be read)"))
+    p.error = _no_answer(p)
     p.add_argument("--from", dest="src", required=True, metavar="NAMESPACE/POD", help="the pod that connects")
     p.add_argument("--to", dest="dst", required=True, metavar="NAMESPACE/POD", help="the pod it connects to")
     p.add_argument("--port", type=_port_number, required=True, help="the port on the destination pod (1 to 65535)")
@@ -66,6 +73,14 @@ def add_subcommands(sub):
     p.add_argument("--fixtures", default=str(FIXTURES))
     p.add_argument("--db", help="SQLite file; default: a new file in a temporary directory")
     p.add_argument("--write-events", help="also save the generated NDJSON here")
+
+
+def _no_answer(parser):
+    """reach's usage errors exit NO_ANSWER, not argparse's 2, which means "not evaluated"."""
+    def error(message):
+        parser.print_usage(sys.stderr)
+        parser.exit(NO_ANSWER, f"{parser.prog}: error: {message}\n")
+    return error
 
 
 def _setup(a):
@@ -90,6 +105,8 @@ def _incident(store, ref):
 def run(a):
     if a.cmd == "bench":
         return _bench(a)
+    if a.cmd == "reach":
+        return _reach(a)
     from . import render
     from .collectors import CollectorError
 
@@ -104,8 +121,6 @@ def run(a):
     if a.cmd == "incidents":
         sys.stdout.write(render.incidents(store))
         return 0
-    if a.cmd == "reach":
-        return _reach(a, store, pipe)
     if a.cmd == "plan":
         from .respond import plan
 
@@ -211,22 +226,34 @@ def _port_number(text):
     return value
 
 
-def _reach(a, store, pipe):
+def _reach(a):
+    """Exit REACH_EXIT[answer], or NO_ANSWER with the reason on stderr when there is no
+    answer to give. An error escaping here would exit 1, which reads as "denied"."""
     from .netpol import pod_to_pod
     from .render import term
     from .schema import entity_id
 
-    ids = []
-    for ref in (a.src, a.dst):
-        if ref.count("/") != 1 or not all(ref.split("/")):
-            raise SystemExit(f"{term(ref)}: give a pod as NAMESPACE/NAME")
-        ids.append(entity_id("pod", f"{pipe.cluster}/{ref}"))
-    answer, notes = pod_to_pod(store, ids[0], ids[1], a.port, a.protocol)
+    try:
+        store, pipe, _ = _setup(a)
+        ids = []
+        for ref in (a.src, a.dst):
+            if ref.count("/") != 1 or not all(ref.split("/")):
+                print(f"no answer: {term(ref)}: give a pod as NAMESPACE/NAME", file=sys.stderr)
+                return NO_ANSWER
+            pid = entity_id("pod", f"{pipe.cluster}/{ref}")
+            if store.entity(pid) is None:
+                print(f"no answer: pod {term(ref)} is not in the model (cluster {term(pipe.cluster)})", file=sys.stderr)
+                return NO_ANSWER
+            ids.append(pid)
+        answer, notes = pod_to_pod(store, ids[0], ids[1], a.port, a.protocol)
+    except Exception as exc:  # any failure is "no answer", never an answer
+        print(f"no answer: {term(type(exc).__name__)}: {term(exc)}", file=sys.stderr)
+        return NO_ANSWER
     print(f"{answer}: {term(a.src)} -> {term(a.dst)} on {a.protocol} {a.port}")
     for n in notes:
         print(f"  note: {term(n)}")
     print("  this assumes the cluster's network plugin enforces NetworkPolicy; the model cannot see that")
-    return 0
+    return REACH_EXIT.get(answer, NO_ANSWER)
 
 
 def _ts(value):
