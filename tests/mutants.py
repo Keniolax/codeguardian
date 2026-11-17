@@ -263,8 +263,8 @@ MUTANTS = [
      [T("test_f_model_values_of_the_wrong_type_are_dropped_not_fatal")]),
     # Collectors fail loudly; stale is not safe.
     ("collector failure recorded as success", V2 + "pipeline.py",
-     "                self.store.record_source(name, False, at, str(exc))\n                errors.append(str(exc))",
-     "                self.store.record_source(name, True, at)",
+     "                    self.store.record_source(name, False, at, str(exc))\n                    errors.append(str(exc))",
+     "                    self.store.record_source(name, True, at)",
      [T("test_bad_k8s_input_fails_loudly_and_marks_facts_stale[{}]", CORE)]),
     ("failed source does not make facts stale", V2 + "store.py",
      '        if health is None or health["status"] != "ok":\n            return True',
@@ -658,8 +658,10 @@ MUTANTS = [
      '    "assumes": ("aws.state", "k8s.state"),',
      '    "runs_as": (),\n    "exposes": ("k8s.state",),\n    "reachable_from": ("k8s.state",),\n'
      '    "assumes": ("aws.state",),', [T(NEVER_RAN, ORDER)]),
-    ("detection records kept in arrival order", PL,
-     '            events.sort(key=lambda eid: ((self.store.event(eid) or {}).get("time", ""), eid))\n', "",
+    ("detection records kept in arrival order", PL, "                    events.sort(key=key)\n",
+     "                    pass\n", [T(DATA_TIME, ORDER)]),
+    ("detection records sorted only by when the first one arrived", PL,
+     "                if min(map(key, added)) < key(old[\"events\"][-1]):", "                if False:",
      [T(DATA_TIME, ORDER)]),
     ("detection first seen is the first record to arrive", PL, "            first = min(first, at)\n", "",
      [T(DATA_TIME, ORDER)]),

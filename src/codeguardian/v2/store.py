@@ -246,6 +246,11 @@ class Store:
                                " ORDER BY time, event_id", [*actors, start, end])
         return [_row(r, EVENT_JSON) for r in rows]
 
+    def event_times(self, eids):
+        rows = self.db.execute("SELECT event_id, time FROM events WHERE event_id IN (SELECT value FROM json_each(?))",
+                               (_J(list(eids)),))
+        return {r["event_id"]: r["time"] for r in rows}
+
     def count_events(self):
         return self.db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 

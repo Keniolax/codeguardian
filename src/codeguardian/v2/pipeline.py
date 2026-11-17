@@ -292,13 +292,22 @@ class Pipeline:
         old = self.store.finding(f["finding_id"])
         was_open = bool(old and old["status"] == "open")
         events = list(old["events"]) if old else []
-        for eid in f["events"]:
-            if eid not in events:
-                events.append(eid)
+        added = [eid for eid in f["events"] if eid not in events]
+        events += added
         first = old["first_seen"] if old else at
         if f["kind"] == "detection":
             # A detection's times are its records' times, whatever order they arrived in.
-            events.sort(key=lambda eid: ((self.store.event(eid) or {}).get("time", ""), eid))
+            # The list is kept in record time; records mostly arrive in order, so it is
+            # sorted again only when a new record is older than the last one it holds.
+            if old and old["events"] and added:
+                times = self.store.event_times(added + old["events"][-1:])
+
+                def key(eid):
+                    return times.get(eid, ""), eid
+
+                if min(map(key, added)) < key(old["events"][-1]):
+                    times = self.store.event_times(events)
+                    events.sort(key=key)
             first = min(first, at)
         f = {**f, "events": events, "status": "open", "first_seen": first,
              "last_seen": max(at, old["last_seen"]) if old else at}
