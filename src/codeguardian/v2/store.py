@@ -43,6 +43,13 @@ CREATE TABLE IF NOT EXISTS sources (
   name TEXT PRIMARY KEY, status TEXT NOT NULL, last_success TEXT, last_attempt TEXT NOT NULL,
   error TEXT);
 CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS snapshots (
+  source TEXT NOT NULL, at TEXT NOT NULL, digest TEXT NOT NULL, status TEXT NOT NULL,
+  received_at TEXT NOT NULL, content TEXT NOT NULL, PRIMARY KEY (source, at, digest));
+CREATE TABLE IF NOT EXISTS model_changes (
+  event_id TEXT PRIMARY KEY, time TEXT NOT NULL, change TEXT NOT NULL, status TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS held (
+  event_id TEXT NOT NULL, rule_id TEXT NOT NULL, hints TEXT NOT NULL, PRIMARY KEY (event_id, rule_id));
 CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
@@ -81,8 +88,11 @@ class Store:
 
     # --- entities ------------------------------------------------------------------------
 
-    def upsert_entity(self, eid, etype, attrs, labels, source, at):
-        """Write an entity. Returns True when anything a rule could see changed."""
+    def upsert_entity(self, eid, etype, attrs, labels, source, at, observed_at=None):
+        """Write an entity. Returns True when anything a rule could see changed. observed_at
+        is the time the attrs describe, when that is later than the snapshot (changes from
+        records newer than the snapshot applied on top)."""
+        observed_at = observed_at or at
         if etype not in ENTITY_TYPES:
             raise ValueError(f"unknown entity type {etype!r}")
         domain = ENTITY_TYPES[etype][1]
@@ -90,13 +100,13 @@ class Store:
         a, lab = _J(attrs, sort_keys=True), _J(labels, sort_keys=True)
         if old is None:
             self.db.execute("INSERT INTO entities VALUES (?,?,?,?,?,?,?,?,?,NULL)",
-                            (eid, etype, domain, a, lab, source, at, at, at))
+                            (eid, etype, domain, a, lab, source, observed_at, at, at))
             return True
         changed = (old["deleted_at"] is not None or _J(old["attrs"], sort_keys=True) != a
                    or _J(old["labels"], sort_keys=True) != lab)
         self.db.execute(
             "UPDATE entities SET attrs=?, labels=?, source=?, observed_at=?, last_seen=MAX(last_seen, ?),"
-            " deleted_at=NULL WHERE id=?", (a, lab, source, at, at, eid))
+            " deleted_at=NULL WHERE id=?", (a, lab, source, observed_at, at, eid))
         return changed
 
     def set_attrs(self, eid, attrs, observed_at=None):
@@ -188,6 +198,12 @@ class Store:
 
     def record_source(self, name, ok, at, error=None):
         old = self.source(name)
+        if ok and old and old["status"] == "failed" and old["last_attempt"] >= at:
+            # An export at this time or later failed. This snapshot is older, so the failure
+            # still stands and the facts stay stale, as they would had it arrived first.
+            self.db.execute("UPDATE sources SET last_success=? WHERE name=?",
+                            (max(at, old["last_success"] or at), name))
+            return
         last_success = at if ok else (old["last_success"] if old else None)
         self.db.execute("INSERT OR REPLACE INTO sources VALUES (?,?,?,?,?)",
                         (name, "ok" if ok else "failed", last_success, at, error))
@@ -236,6 +252,11 @@ class Store:
                                " ORDER BY time, event_id", [*actors, start, end])
         return [_row(r, EVENT_JSON) for r in rows]
 
+    def event_times(self, eids):
+        rows = self.db.execute("SELECT event_id, time FROM events WHERE event_id IN (SELECT value FROM json_each(?))",
+                               (_J(list(eids)),))
+        return {r["event_id"]: r["time"] for r in rows}
+
     def count_events(self):
         return self.db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
@@ -277,6 +298,49 @@ class Store:
 
     def drop_incident(self, iid):
         self.db.execute("DELETE FROM incidents WHERE incident_id=?", (iid,))
+
+    # --- the journal: every snapshot and IAM change record, for the history ---------------
+
+    def snapshot_entries(self, source, at):
+        rows = self.db.execute("SELECT digest, status FROM snapshots WHERE source=? AND at=?", (source, at))
+        return [dict(r) for r in rows]
+
+    def add_snapshot(self, source, at, digest, status, received_at, content):
+        self.db.execute("INSERT OR IGNORE INTO snapshots VALUES (?,?,?,?,?,?)",
+                        (source, at, digest, status, received_at, content))
+
+    def snapshots(self, statuses=None):
+        rows = [dict(r) for r in self.db.execute("SELECT * FROM snapshots ORDER BY at, source, digest")]
+        return [r for r in rows if statuses is None or r["status"] in statuses]
+
+    def add_model_change(self, event_id, time, change, status):
+        self.db.execute("INSERT OR IGNORE INTO model_changes VALUES (?,?,?,?)",
+                        (event_id, time, _J(change, sort_keys=True), status))
+
+    def set_model_change_status(self, event_id, status):
+        self.db.execute("UPDATE model_changes SET status=? WHERE event_id=?", (status, event_id))
+
+    def model_changes(self, status=None):
+        q, args = "SELECT * FROM model_changes", []
+        if status:
+            q, args = q + " WHERE status=?", [status]
+        return [_row(r, ("change",)) for r in self.db.execute(q + " ORDER BY time, event_id", args)]
+
+    # --- detections held until the model holds what they need ------------------------------
+
+    def hold(self, event_id, rule_id, hints):
+        self.db.execute("INSERT OR IGNORE INTO held VALUES (?,?,?)", (event_id, rule_id, _J(hints)))
+
+    def unhold(self, event_id, rule_id):
+        self.db.execute("DELETE FROM held WHERE event_id=? AND rule_id=?", (event_id, rule_id))
+
+    def held(self):
+        rows = self.db.execute("SELECT held.event_id, held.rule_id, held.hints FROM held JOIN events"
+                               " ON events.event_id = held.event_id ORDER BY events.time, held.event_id, held.rule_id")
+        return [_row(r, ("hints",)) for r in rows]
+
+    def set_event_refs(self, event_id, actor, targets):
+        self.db.execute("UPDATE events SET actor=?, targets=? WHERE event_id=?", (actor, _J(targets), event_id))
 
     # --- counters ------------------------------------------------------------------------
 

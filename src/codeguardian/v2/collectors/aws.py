@@ -112,28 +112,34 @@ def apply(store, data, at):
         old = store.entity(rid)
         # Changes from CloudTrail newer than this snapshot are not in it yet: re-apply them
         # on top, in time order. Older ones, and their tombstones, the snapshot supersedes.
+        # A change at the snapshot's own time counts after it, as when the snapshot arrives
+        # first (Pipeline._apply_change), so the result does not depend on arrival order.
         pending = {k: e for k, e in (old["attrs"].get("policy_changes") or {}).items()
-                   if e["time"] > at} if old else {}
+                   if e["time"] >= at} if old else {}
         for key, e in sorted(pending.items(), key=lambda kv: (kv[1]["time"], kv[0])):
             attrs = apply_policy_change(attrs, key, e)
         attrs["policy_changes"] = pending
-        attrs["change_markers"] = [m for m in (old["attrs"].get("change_markers") or []) if m["time"] > at] if old else []
+        attrs["change_markers"] = [m for m in (old["attrs"].get("change_markers") or [])
+                                   if m["time"] >= at] if old else []
         # Keep the derived attrs from the last resolve so an unchanged role is not a change.
         if old:
             for k in ("admin_wildcard", "unknown_policy_documents", "not_evaluated"):
                 if k in old["attrs"]:
                     attrs[k] = old["attrs"][k]
-        if store.upsert_entity(rid, "iam_role", attrs, {"tags": _tags(r.get("Tags"))}, SOURCE, at):
+        # The attrs then describe the time of the newest change applied, as they would had
+        # the snapshot arrived first and the record after it.
+        observed = max([at] + [e["time"] for e in pending.values()])
+        if store.upsert_entity(rid, "iam_role", attrs, {"tags": _tags(r.get("Tags"))}, SOURCE, at, observed):
             delta.entity(rid, "iam_role")
         seen_entities.add(rid)
-        roles.append(rid)
+        roles.append((rid, observed, "aws.cloudtrail" if pending else SOURCE))
     gone_entities, gone_edges = store.sweep(SOURCE, seen_entities, keep_edges(store), at)
     for eid, etype in gone_entities:
         delta.entity(eid, etype)
     for _, etype in gone_edges:
         delta.edge(etype)
-    for rid in roles:
-        delta.merge(recompute_role(store, rid, at, SOURCE))
+    for rid, observed, source in roles:
+        delta.merge(recompute_role(store, rid, observed, source))
     return delta
 
 

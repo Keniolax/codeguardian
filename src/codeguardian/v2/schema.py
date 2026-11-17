@@ -39,6 +39,20 @@ EDGE_ATTRS = {
     "exposes": ("ingress_from_outside",),
 }
 
+# edge type -> the collectors whose snapshots write it. A detection that walks an edge
+# whose collector has never run cannot tell "no such edge" from "not looked at yet".
+EDGE_SOURCES = {
+    "contains": ("ai.inventory",),
+    "uses_model": ("ai.inventory",),
+    "can_call": ("ai.inventory",),
+    "reads": ("ai.inventory",),
+    "runs_as": ("k8s.state",),
+    "exposes": ("k8s.state",),
+    "reachable_from": ("k8s.state",),
+    "assumes": ("aws.state", "k8s.state"),
+    "has_permission": ("aws.state",),
+}
+
 EVENT_SOURCES = {
     "aws.cloudtrail": "cloud",
     "k8s.audit": "kubernetes",

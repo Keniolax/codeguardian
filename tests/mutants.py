@@ -7,9 +7,9 @@ each named test on its own, and restores the file. A mutant counts as caught onl
 pytest exits with code 1 (tests failed). Exit code 2 or more means the mutant broke
 collection or imports, which proves nothing, so it is reported as broken. The run fails
 if any mutant survives or breaks, if the tree is not clean afterwards, or if a test whose
-name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy or -NP files,
-has no mutant. In the NetworkPolicy and -NP files every parametrized case must also have a
-mutant of its own.
+name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy, -NP or order
+files, has no mutant. In the NetworkPolicy, -NP and order files every parametrized case must
+also have a mutant of its own.
 """
 
 import ast
@@ -32,6 +32,9 @@ K8S = V2 + "collectors/k8s.py"
 SHADOW = "tests/test_v2_shadow.py"
 RULES = V2 + "rules.py"
 CLI = V2 + "cli.py"
+ORDER = "tests/test_v2_order.py"
+PL = V2 + "pipeline.py"
+HIST = V2 + "history.py"
 
 
 def T(name, file=CHAIN):
@@ -58,6 +61,28 @@ TWIN_TEST = "test_loader_gives_each_gated_path_rule_one_twin_after_it"
 FORM_TEST = "test_loader_refuses_a_networkpolicy_test_that_could_read_not_evaluated_as_closed"
 FORMS = ("eq-allowed", "in-allowed", "ne-not-evaluated", "nonempty")
 CLI_NP_TEST = "test_findings_list_the_np_finding_and_the_swap_from_the_command_line"
+EVERY_ORDER = "test_every_order_of_two_snapshots_and_four_change_records_ends_the_same"
+OLDER = "test_snapshot_older_than_the_last_applied_is_refused_and_changes_nothing"
+PER_SOURCE = "test_refusal_is_per_collector"
+SAME_TIME = "test_same_time_other_content_is_refused_and_marked_and_same_content_is_a_no_op"
+REPLAY = "test_replaying_everything_changes_nothing"
+NORMALISED = "test_snapshot_time_is_normalised_so_string_order_is_time_order"
+INGEST = "test_ingest_says_a_snapshot_was_refused_and_exits_3"
+PENDING = "test_change_record_for_a_role_not_yet_in_the_model_applies_when_a_snapshot_brings_it"
+HELD = "test_detection_whose_target_is_not_in_the_model_is_held_and_decided_later"
+NEVER_RAN = "test_detection_that_walks_a_collector_that_never_ran_is_held_not_passed"
+DATA_TIME = "test_detection_findings_keep_their_records_in_data_time"
+FEW_ORDERS = "test_a_few_orders_give_the_same_model_and_history"
+AT_SNAPSHOT = "test_record_at_the_time_of_a_snapshot_counts_after_it"
+REOPENED = "test_a_path_that_closes_and_opens_again_is_reopened_in_the_history"
+REBUILDS = "test_history_replay_rebuilds_the_live_model_with_its_cluster_and_outside_range"
+NOT_BEFORE = "test_finding_found_after_an_older_snapshot_is_not_dated_before_its_data"
+LATE_DELETE = "test_path_open_from_10_00_to_10_20_shows_in_the_history_when_the_delete_arrives_first"
+HIST_OUT = "test_findings_history_names_each_change_and_escapes_text"
+BROKEN_OLDER = "test_broken_snapshot_older_than_the_last_good_one_changes_nothing"
+AT_EITHER = "test_record_at_a_snapshots_time_counts_after_it_whichever_arrives_first"
+NEWER_FAILURE = "test_newer_failed_export_still_stands_when_an_older_snapshot_arrives_after_it"
+REFUSED_AGAIN = "test_a_refused_snapshot_sent_again_is_refused_again"
 
 
 MUTANTS = [
@@ -139,7 +164,8 @@ MUTANTS = [
      "            attrs = apply_policy_change(attrs, key, e)", "            pass",
      [T("test_b_snapshot_keeps_newer_event_changes_and_supersedes_older_ones")]),
     ("two changes at the same time applied in arrival order", V2 + "pipeline.py",
-     "            return self._mark(role, a, ev, f\"two different changes to {key} at {ev['time']}; order unknown, not evaluated\")",
+     "            return \"not_evaluated\", self._mark(role, a, ev, f\"two different changes to {key} at {ev['time']};\"\n"
+     "                                                            \" order unknown, not evaluated\")",
      "            pass",
      [T("test_b_two_changes_at_the_same_time_are_marked_not_dropped")]),
     # C: detection needs the graph.
@@ -251,8 +277,8 @@ MUTANTS = [
      [T("test_f_model_values_of_the_wrong_type_are_dropped_not_fatal")]),
     # Collectors fail loudly; stale is not safe.
     ("collector failure recorded as success", V2 + "pipeline.py",
-     "                self.store.record_source(name, False, at, str(exc))\n                errors.append(str(exc))",
-     "                self.store.record_source(name, True, at)",
+     "                    self.store.record_source(name, False, at, str(exc))\n                    errors.append(str(exc))",
+     "                    self.store.record_source(name, True, at)",
      [T("test_bad_k8s_input_fails_loudly_and_marks_facts_stale[{}]", CORE)]),
     ("failed source does not make facts stale", V2 + "store.py",
      '        if health is None or health["status"] != "ok":\n            return True',
@@ -428,8 +454,8 @@ MUTANTS = [
     ("excepts checked one at a time, not together", NP,
      "        if list(ipaddress.collapse_addresses(inside)) != [part]:", "        if True:", [T(IPBLOCK_TEST, NET)]),
     ("outside range not passed to the collector", V2 + "pipeline.py",
-     "k8s_collector.load(k8s), self.cluster, at,\n                                                     self.outside)))",
-     "k8s_collector.load(k8s), self.cluster, at)))", [T(IPBLOCK_TEST, NET)]),
+     "snapshot_content(name, data, self.cluster, self.outside)",
+     "snapshot_content(name, data, self.cluster, netpol.OUTSIDE)", [T(IPBLOCK_TEST, NET)]),
     ("rule ports not checked", NP,
      "    port_ok = _or(*[_port(p, target, protocol, pod, what, notes) for p in ports]) if ports else True",
      "    port_ok = True", [T(PORT_TEST, NET), T(LAYOUT_TEST, NET)]),
@@ -669,6 +695,133 @@ MUTANTS = [
     ("reach lets an error escape, which exits 1 (denied)", CLI,
      '    except Exception as exc:  # any failure is "no answer", never an answer',
      "    except ZeroDivisionError as exc:", [T("test_reach_exits_3_when_the_model_cannot_be_read", SHADOW)]),
+    # Order (slice snapshot-order): each guard that keeps arrival order out of the model.
+    ("snapshot older than the last applied one accepted", PL, "        elif last is not None and at < last:",
+     "        elif False:", [T(OLDER, ORDER), T(PER_SOURCE, ORDER), T(EVERY_ORDER, ORDER)]),
+    ("repeated snapshot not recognised", PL,
+     '        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):\n'
+     '            self.store.bump("snapshot_unchanged")\n',
+     "        if False:\n", [T(REPLAY, ORDER), T(SAME_TIME, ORDER), T(NORMALISED, ORDER), T(INGEST, ORDER)]),
+    ("other content at the same time applied", PL, "        if others or (last is not None and at == last):",
+     "        if False:", [T(SAME_TIME, ORDER), T(REPLAY, ORDER)]),
+    # Review of slice 2: controls that had no test, and the faults it fixed.
+    ("other content at the last applied time applied when the journal lacks it", PL,
+     "        if others or (last is not None and at == last):", "        if others:", [T(SAME_TIME, ORDER)]),
+    ("a refused snapshot sent again reads as already in the model", PL,
+     '        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):',
+     '        if any(e["digest"] == d for e in same_time):', [T(REFUSED_AGAIN, ORDER), T(REPLAY, ORDER)]),
+    ("a refused snapshot sent again conflicts with itself", PL,
+     '        others = [e for e in same_time if e["digest"] != d]', "        others = same_time",
+     [T(REFUSED_AGAIN, ORDER)]),
+    ("a record at a snapshot's time dropped when the snapshot arrives after it", V2 + "collectors/aws.py",
+     '                   if e["time"] >= at} if old else {}', '                   if e["time"] > at} if old else {}',
+     [T(AT_EITHER, ORDER)]),
+    ("a mark at a snapshot's time dropped when the snapshot arrives after it", V2 + "collectors/aws.py",
+     '                                   if m["time"] >= at] if old else []',
+     '                                   if m["time"] > at] if old else []', [T(AT_EITHER, ORDER)]),
+    ("an older good snapshot clears a newer failure", V2 + "store.py",
+     '        if ok and old and old["status"] == "failed" and old["last_attempt"] >= at:', "        if False:",
+     [T(NEWER_FAILURE, ORDER)]),
+    ("a good snapshot at the time of a failure clears it", V2 + "store.py",
+     'old["last_attempt"] >= at:', 'old["last_attempt"] > at:', [T(NEWER_FAILURE, ORDER)]),
+    ("a broken export at the time of the last good one ignored", PL,
+     "                if last is not None and at < last:", "                if last is not None and at <= last:",
+     [T(NEWER_FAILURE, ORDER)]),
+    ("a held detection decided later joins no incident", PL,
+     '                correlate.add_detection(self.store, f, ev["time"])', "                pass", [T(HELD, ORDER)]),
+    ("held records alone do not show as not evaluated", V2 + "render.py",
+     '    if held or counts.get("events_actor_null") or any(changes.values()):',
+     '    if counts.get("events_actor_null") or any(changes.values()):', [T(NEVER_RAN, ORDER)]),
+    ("a collector that ran and then failed counts as never run", V2 + "detect.py",
+     '(store.source(n) or {}).get("last_success") is None)', '(store.source(n) or {}).get("status") != "ok")',
+     [T(NEVER_RAN, ORDER)]),
+    ("refusals not shown when another collector fails in the same ingest", V2 + "cli.py",
+     '            changes = getattr(exc, "changes", None) or {',
+     '            changes = None or {', [T(INGEST, ORDER)]),
+    ("snapshot time not normalised", PL, "        at = ts(at) if at else self.clock.now()",
+     "        at = at or self.clock.now()", [T(NORMALISED, ORDER)]),
+    ("change records wait for no snapshot", PL, "        if aws_collector.SOURCE in admitted:\n            self._apply_pending()\n",
+     "", [T(PENDING, ORDER)]),
+    ("a waiting record that applied still counts as waiting", PL,
+     '                self.store.set_model_change_status(c["event_id"], status)\n', "", [T(PENDING, ORDER)]),
+    ("detection that cannot be evaluated not held", PL, '                self.store.hold(ev["event_id"], rule["id"], hints)\n',
+     "", [T(HELD, ORDER), T(NEVER_RAN, ORDER)]),
+    ("held detections never decided", PL, "        self._decide_held(changes)\n", "", [T(HELD, ORDER), T(NEVER_RAN, ORDER)]),
+    ("decided record keeps its unresolved references", PL,
+     '            self.store.set_event_refs(ev["event_id"], actor, targets)\n', "", [T(HELD, ORDER)]),
+    ("decided record stays held", PL, '            self.store.unhold(h["event_id"], h["rule_id"])\n', "", [T(HELD, ORDER)]),
+    ("unresolved target read as no match", V2 + "detect.py",
+     '    if binds_targets and any(t is None for t in ev["targets"]):', "    if False:", [T(HELD, ORDER)]),
+    ("collector that never ran read as no edge", V2 + "detect.py", "    if sources_never_run(store, rule):",
+     "    if False:", [T(NEVER_RAN, ORDER)]),
+    ("collector that only ever failed counts as run", V2 + "detect.py",
+     '    return sorted(n for n in needed if (store.source(n) or {}).get("last_success") is None)',
+     "    return sorted(n for n in needed if store.source(n) is None)", [T(NEVER_RAN, ORDER)]),
+    ("contains edge needs no AI inventory", V2 + "schema.py", '    "contains": ("ai.inventory",),',
+     '    "contains": (),', [T(NEVER_RAN, ORDER)]),
+    ("service account edges need no k8s snapshot", V2 + "schema.py",
+     '    "runs_as": ("k8s.state",),\n    "exposes": ("k8s.state",),\n    "reachable_from": ("k8s.state",),\n'
+     '    "assumes": ("aws.state", "k8s.state"),',
+     '    "runs_as": (),\n    "exposes": ("k8s.state",),\n    "reachable_from": ("k8s.state",),\n'
+     '    "assumes": ("aws.state",),', [T(NEVER_RAN, ORDER)]),
+    ("detection records kept in arrival order", PL, "                    events.sort(key=key)\n",
+     "                    pass\n", [T(DATA_TIME, ORDER)]),
+    ("detection records sorted only by when the first one arrived", PL,
+     "                if min(map(key, added)) < key(old[\"events\"][-1]):", "                if False:",
+     [T(DATA_TIME, ORDER)]),
+    ("detection first seen is the first record to arrive", PL, "            first = min(first, at)\n", "",
+     [T(DATA_TIME, ORDER)]),
+    ("role dated to the snapshot when newer changes apply on top", V2 + "collectors/aws.py",
+     '        observed = max([at] + [e["time"] for e in pending.values()])', "        observed = at",
+     [T(FEW_ORDERS, ORDER)]),
+    ("edges rebuilt from newer records credited to the snapshot", V2 + "collectors/aws.py",
+     '"aws.cloudtrail" if pending else SOURCE', "SOURCE", [T(FEW_ORDERS, ORDER)]),
+    ("IRSA edges dated by whichever snapshot came last", PL, "        self.link(self._link_time(at))",
+     "        self.link(at)", [T(FEW_ORDERS, ORDER)]),
+    ("findings dated by the input, not by the model", PL, "        return max(times)", "        return at",
+     [T(NOT_BEFORE, ORDER)]),
+    ("failed collector no longer re-evaluates", PL,
+     "        changes = self.apply_snapshot(contents, at, reevaluate=marked)",
+     "        changes = self.apply_snapshot(contents, at)", [T("test_bad_k8s_input_fails_loudly_and_marks_facts_stale[{}]", CORE)]),
+    ("broken snapshot older than the last good one marks the collector failed", PL,
+     "                if last is not None and at < last:", "                if False:", [T(BROKEN_OLDER, ORDER)]),
+    ("ingest says facts went stale when none did", V2 + "cli.py",
+     "        if stale:\n            print(", "        if True:\n            print(", [T(BROKEN_OLDER, ORDER)]),
+    ("replay ignores the k8s snapshot's cluster", PL,
+     'k8s_collector.apply(self.store, content["data"], content["cluster"], at, tuple(content["outside"]))',
+     'k8s_collector.apply(self.store, content["data"], self.cluster, at, tuple(content["outside"]))',
+     [T(REBUILDS, ORDER)]),
+    ("replay ignores the outside range", PL,
+     'k8s_collector.apply(self.store, content["data"], content["cluster"], at, tuple(content["outside"]))',
+     'k8s_collector.apply(self.store, content["data"], content["cluster"], at, self.outside)',
+     [T(REBUILDS, ORDER)]),
+    ("reopened recorded as opened", PL, '"reopened" if old else "opened"', '"opened"', [T(REOPENED, ORDER)]),
+    ("history leaves out snapshots refused as older", HIST,
+     '    for s in store.snapshots(statuses=("applied", "older")):', '    for s in store.snapshots(statuses=("applied",)):',
+     [T(FEW_ORDERS, ORDER)]),
+    ("history replays a snapshot that conflicts", HIST,
+     '    for s in store.snapshots(statuses=("applied", "older")):', "    for s in store.snapshots():", [T(SAME_TIME, ORDER)]),
+    ("history replays a record before a snapshot of the same time", HIST, "    out = [(at, 0, ", "    out = [(at, 2, ",
+     [T(AT_SNAPSHOT, ORDER)]),
+    ("history leaves out change records", HIST,
+     '    out += [(c["time"], 1, c["event_id"], c["change"]) for c in store.model_changes()]\n', "",
+     [T(LATE_DELETE, ORDER)]),
+    ("history records nothing", HIST, "    pipe.recorder = []\n", "", [T(LATE_DELETE, ORDER)]),
+    ("history leaves out detections", HIST, '    for f in store.findings(kind="detection"):',
+     "    for f in []:", [T(DATA_TIME, ORDER)]),
+    ("refused snapshots not shown", V2 + "render.py",
+     '    if refused:\n        out += ["", "Snapshots refused:"] + refused\n', "", [T(OLDER, ORDER), T(SAME_TIME, ORDER)]),
+    ("held records not shown", V2 + "render.py", "        for rule_id, n in sorted(held.items()):",
+     "        for rule_id, n in []:", [T(HELD, ORDER)]),
+    ("records waiting for a role counted as ever, not now", V2 + "render.py",
+     '    changes["model_change_role_not_in_model"] = len(store.model_changes(status="pending"))\n', "",
+     [T(PENDING, ORDER)]),
+    ("history path not escaped", V2 + "render.py",
+     "            out.append(f\"  path: {' -> '.join(safe(p, 300) for p in f['path'])}\")",
+     "            out.append(f\"  path: {' -> '.join(p for p in f['path'])}\")", [T(HIST_OUT, ORDER)]),
+    ("findings --history ignored", V2 + "cli.py", "        if a.history:", "        if False:", [T(HIST_OUT, ORDER)]),
+    ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 3 if refused else 0", "    return 0",
+     [T(INGEST, ORDER)]),
 ]
 
 
@@ -682,7 +835,7 @@ def chain_tests():
     """Tests that must each have a mutant: A to F in the chain file, and every export test."""
     out = []
     for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True),
-                       (NET, lambda n: True), (SHADOW, lambda n: True)):
+                       (NET, lambda n: True), (SHADOW, lambda n: True), (ORDER, lambda n: True)):
         tree = ast.parse((ROOT / file).read_text())
         out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name.startswith("test_") and keep(n.name)]
@@ -708,11 +861,11 @@ def main():
     named = {node for *_, tests in MUTANTS for node in tests}
     env = dict(os.environ, PYTHONPATH="src", PYTHONDONTWRITEBYTECODE="1")
     collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN,
-                                NET, SHADOW], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
-    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW)) and n not in named]
+                                NET, SHADOW, ORDER], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
+    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW, ORDER)) and n not in named]
     for n in loose:
         print(f"parametrized case with no mutant of its own: {n}")
-    if any(n.startswith((NET, SHADOW)) for n in loose):
+    if any(n.startswith((NET, SHADOW, ORDER)) for n in loose):
         return 1
     nodes = sorted(named)
     baseline = [n for n in nodes if pytest(n) != 0]
@@ -740,8 +893,8 @@ def main():
         print(f"{verdict:<10} {name:<{width}}  {node}")
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
-          f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy"
-          " and -NP tests, all covered")
+          f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy, -NP"
+          " and order tests, all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")
         return 1
