@@ -41,6 +41,8 @@ def add_subcommands(sub):
 
     p = common(sub.add_parser("findings", help="list findings"))
     p.add_argument("--status", choices=["open", "resolved"])
+    p.add_argument("--history", action="store_true",
+                   help="also show each finding's status changes in data time, rebuilt from the journal")
     common(sub.add_parser("incidents", help="list incidents with their timelines"))
     p = common(sub.add_parser("plan", help="print the dry-run response plan for an incident"))
     p.add_argument("--incident", required=True, help="incident ID or a unique prefix of it")
@@ -99,7 +101,12 @@ def run(a):
     if a.cmd == "watch":
         return _watch(a, store, pipe)
     if a.cmd == "findings":
-        sys.stdout.write(render.findings(store, clock.now(), a.status))
+        hist = None
+        if a.history:
+            from .history import history
+
+            hist = history(store, pipe.rules, clock.now())
+        sys.stdout.write(render.findings(store, clock.now(), a.status, hist))
         return 0
     if a.cmd == "incidents":
         sys.stdout.write(render.incidents(store))
@@ -185,21 +192,27 @@ def _ingest(a, store, pipe, clock):
         if a.k8s:
             store.set_setting("cluster", pipe.cluster)
     opened = resolved = 0
+    refused = []
     for job in jobs:
         try:
             changes = pipe.snapshot(**job)
         except CollectorError as exc:
             errors.append(str(exc))
-            continue
+            changes = getattr(exc, "changes", None) or {"opened": [], "resolved": [], "refused": [], "unchanged": []}
         opened, resolved = opened + len(changes["opened"]), resolved + len(changes["resolved"])
+        refused += changes["refused"]
+        for name in changes["unchanged"]:
+            print(f"{name}: this snapshot is already in the model; nothing changed")
     store.commit()
+    for name, verdict, reason in refused:
+        print(f"snapshot refused: {name}: {term(reason)}; nothing changed", file=sys.stderr)
     if errors:
         for e in errors:
             print(f"collector failed: {term(e, 1000)}", file=sys.stderr)
         print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
         return 2
     print(f"opened {opened}, resolved {resolved} findings")
-    return 0
+    return 3 if refused else 0
 
 
 def _port_number(text):

@@ -123,17 +123,20 @@ def apply(store, data, at):
             for k in ("admin_wildcard", "unknown_policy_documents", "not_evaluated"):
                 if k in old["attrs"]:
                     attrs[k] = old["attrs"][k]
-        if store.upsert_entity(rid, "iam_role", attrs, {"tags": _tags(r.get("Tags"))}, SOURCE, at):
+        # The attrs then describe the time of the newest change applied, as they would had
+        # the snapshot arrived first and the record after it.
+        observed = max([at] + [e["time"] for e in pending.values()])
+        if store.upsert_entity(rid, "iam_role", attrs, {"tags": _tags(r.get("Tags"))}, SOURCE, at, observed):
             delta.entity(rid, "iam_role")
         seen_entities.add(rid)
-        roles.append(rid)
+        roles.append((rid, observed, "aws.cloudtrail" if pending else SOURCE))
     gone_entities, gone_edges = store.sweep(SOURCE, seen_entities, keep_edges(store), at)
     for eid, etype in gone_entities:
         delta.entity(eid, etype)
     for _, etype in gone_edges:
         delta.edge(etype)
-    for rid in roles:
-        delta.merge(recompute_role(store, rid, at, SOURCE))
+    for rid, observed, source in roles:
+        delta.merge(recompute_role(store, rid, observed, source))
     return delta
 
 

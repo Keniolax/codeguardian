@@ -75,7 +75,21 @@ def finding_lines(f):
     return lines
 
 
-def findings(store, now, status=None):
+def refused_snapshots(store):
+    """Snapshots the model did not apply. An older one is kept for the history only; two
+    different ones at one time mean the model may not match what held then."""
+    lines = []
+    for s in store.snapshots(statuses=("older", "conflict")):
+        if s["status"] == "older":
+            lines.append(f"- {s['source']} taken at {s['at']}: refused, older than the last applied snapshot;"
+                         " used for the history only")
+        else:
+            lines.append(f"- {s['source']} taken at {s['at']}: refused, another snapshot of {s['source']} with that"
+                         " time has other content; which one held is not known (not evaluated)")
+    return lines
+
+
+def findings(store, now, status=None, history=None):
     out = ["Sources:"] + sources(store, now) + ["", "Findings:"]
     rows = store.findings(status=status)
     for f in rows:
@@ -83,17 +97,48 @@ def findings(store, now, status=None):
     if not rows:
         out.append("- none")
     counts = store.counters()
-    skipped = {k: v for k, v in counts.items() if k.startswith("unevaluable:")}
+    held = {}
+    for h in store.held():
+        held[h["rule_id"]] = held.get(h["rule_id"], 0) + 1
     changes = {k: counts.get(k, 0) for k in CHANGE_COUNTERS}
-    if skipped or counts.get("events_actor_null") or any(changes.values()):
+    # Records for a role the model does not hold wait for a snapshot; count the ones waiting now.
+    changes["model_change_role_not_in_model"] = len(store.model_changes(status="pending"))
+    if held or counts.get("events_actor_null") or any(changes.values()):
         out += ["", "Not evaluated:"]
         out.append(f"- events whose actor was not resolved: {int(counts.get('events_actor_null', 0))}")
-        for k, v in sorted(skipped.items()):
-            out.append(f"- {safe(k.split(':', 1)[1])} could not evaluate {int(v)} events (actor not resolved)")
+        for rule_id, n in sorted(held.items()):
+            out.append(f"- {rule_id}: records held, not decided yet: {n} (actor or target not in the model, or a"
+                       " collector the rule needs has never run); decided after the next snapshot")
         for k, text in CHANGE_COUNTERS.items():
             if changes[k]:
                 out.append(f"- {text}: {int(changes[k])}")
+    refused = refused_snapshots(store)
+    if refused:
+        out += ["", "Snapshots refused:"] + refused
+    if history is not None:
+        out += ["", "History (data time, rebuilt from every snapshot and IAM change record in the model):"]
+        out += history_lines(store, history) or ["- none"]
     return "\n".join(out) + "\n"
+
+
+def cause_text(store, cause):
+    kind, key, _ = cause
+    if kind == "snapshot":
+        return f"snapshot of {key}"
+    ev = store.event(key) if key else None
+    return f"record {key} ({safe(ev['action'], 200)})" if ev else f"record {safe(key)}"
+
+
+def history_lines(store, entries):
+    out = []
+    for e in entries:
+        f = e["finding"]
+        out.append(f"- {f['rule_id']} {f['finding_id']}: {safe(f['title'], 300)}")
+        if f["path"]:
+            out.append(f"  path: {' -> '.join(safe(p, 300) for p in f['path'])}")
+        for c in e["changes"]:
+            out.append(f"  {c['time']} {c['change']} by {cause_text(store, c['cause'])}")
+    return out
 
 
 def event_line(ev):
