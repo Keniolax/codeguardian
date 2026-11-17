@@ -192,12 +192,13 @@ def _ingest(a, store, pipe, clock):
         if a.k8s:
             store.set_setting("cluster", pipe.cluster)
     opened = resolved = 0
-    refused = []
+    refused, stale = [], bool(errors)
     for job in jobs:
         try:
             changes = pipe.snapshot(**job)
         except CollectorError as exc:
             errors.append(str(exc))
+            stale = stale or getattr(exc, "marked_stale", True)
             changes = getattr(exc, "changes", None) or {"opened": [], "resolved": [], "refused": [], "unchanged": []}
         opened, resolved = opened + len(changes["opened"]), resolved + len(changes["resolved"])
         refused += changes["refused"]
@@ -209,7 +210,8 @@ def _ingest(a, store, pipe, clock):
     if errors:
         for e in errors:
             print(f"collector failed: {term(e, 1000)}", file=sys.stderr)
-        print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
+        if stale:
+            print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
         return 2
     print(f"opened {opened}, resolved {resolved} findings")
     return 3 if refused else 0

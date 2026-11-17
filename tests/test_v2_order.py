@@ -7,6 +7,7 @@ from itertools import permutations
 
 from codeguardian.cli import main as cli
 from codeguardian.v2 import render
+from codeguardian.v2.collectors import CollectorError
 from codeguardian.v2.history import history
 from codeguardian.v2.pipeline import Pipeline
 from codeguardian.v2.rules import load_rules
@@ -229,6 +230,39 @@ def test_same_time_other_content_is_refused_and_marked_and_same_content_is_a_no_
     assert path_history(store) == []
 
 
+def test_broken_snapshot_older_than_the_last_good_one_changes_nothing(tmp_path, capsys):
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+    states = set()
+    for order in (("good", "bad"), ("bad", "good")):
+        store, pipe = fresh()
+        for which in order:
+            try:
+                if which == "good":
+                    pipe.snapshot(k8s=FX / "k8s" / "state.json", at=SNAPSHOT_AT)
+                else:
+                    pipe.snapshot(k8s=bad, at="2026-11-14T09:50:00Z")
+            except CollectorError as exc:
+                assert ("older than the last applied snapshot" in str(exc)) == (order[0] == "good")
+        states.add(json.dumps([store.sources(), live_model(store)]))
+        assert store.source("k8s.state")["status"] == "ok"
+    assert len(states) == 1
+    db = str(tmp_path / "m.db")
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", SNAPSHOT_AT, "--k8s", str(FX / "k8s/state.json")]) == 0
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", "2026-11-14T09:50:00Z", "--k8s", str(bad)]) == 2
+    assert "marked stale" not in capsys.readouterr().err
+    # Control: a broken snapshot newer than the last good one marks the collector failed.
+    store, pipe = fresh()
+    pipe.snapshot(k8s=FX / "k8s" / "state.json", at=SNAPSHOT_AT)
+    try:
+        pipe.snapshot(k8s=bad, at=LATER_AT)
+    except CollectorError as exc:
+        assert "older than the last applied" not in str(exc)
+    assert store.source("k8s.state")["status"] == "failed"
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", LATER_AT, "--k8s", str(bad)]) == 2
+    assert "its facts are now marked stale" in capsys.readouterr().err
+
+
 def test_snapshot_time_is_normalised_so_string_order_is_time_order(tmp_path):
     store, pipe = fresh()
     pipe.snapshot(ai=FX / "ai" / "inventory.json", at="2026-11-14T10:10:00Z")
@@ -276,6 +310,14 @@ def test_change_record_for_a_role_not_yet_in_the_model_applies_when_a_snapshot_b
     assert [c["status"] for c in cstore.model_changes()] == ["older_than_model"]
 
 
+def no_agent_role(tmp_path):
+    data = fixture("aws/iam.json")
+    data["RoleDetailList"] = [r for r in data["RoleDetailList"] if r["RoleName"] != "sentinel-agent"]
+    path = tmp_path / "iam-no-agent-role.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
 def _held(store):
     return [(h["rule_id"], h["event_id"]) for h in store.held()]
 
@@ -289,6 +331,13 @@ def test_detection_whose_target_is_not_in_the_model_is_held_and_decided_later(tm
     (f,) = store.findings(rule_id="DET-AI-002")
     assert f["events"] == [r["event_id"]] and f["first_seen"] == "2026-11-14T10:00:00.000000Z"
     assert store.event(r["event_id"])["targets"] == [ROLE] and _held(store) == []
+    # With every collector run, a record for a role the model does not hold yet is held too.
+    store, pipe = fresh()
+    pipe.snapshot(**stage1(aws=(no_agent_role(tmp_path), BUCKETS, TAGS)))
+    r = pipe.process(iam_event("PutRolePolicy"))
+    assert store.event(r["event_id"])["targets"] == [None] and _held(store) == [("DET-AI-002", r["event_id"])]
+    pipe.snapshot(aws=(FX / "aws" / "iam.json", BUCKETS, TAGS), at=LATER_AT)  # the role appears
+    assert len(store.findings(rule_id="DET-AI-002")) == 1 and _held(store) == []
     # Control: the same record for a role no agent runs as is decided with no finding.
     cstore, cpipe = fresh()
     other = iam_event("PutRolePolicy")
@@ -299,13 +348,22 @@ def test_detection_whose_target_is_not_in_the_model_is_held_and_decided_later(tm
 
 
 def test_detection_that_walks_a_collector_that_never_ran_is_held_not_passed(tmp_path):
-    store, pipe = fresh()
-    pipe.snapshot(aws=(FX / "aws" / "iam.json", BUCKETS, TAGS), at=SNAPSHOT_AT)  # no k8s, no ai yet
-    r = pipe.process(iam_event("PutRolePolicy"))
-    assert store.event(r["event_id"])["targets"] == [ROLE]  # the role is known
-    assert r["alerts"] == [] and _held(store) == [("DET-AI-002", r["event_id"])]
-    pipe.snapshot(k8s=FX / "k8s" / "state.json", ai=FX / "ai" / "inventory.json", at=SNAPSHOT_AT)
-    assert [f["rule_id"] for f in store.findings(rule_id="DET-AI-002")] == ["DET-AI-002"] and _held(store) == []
+    aws = (FX / "aws" / "iam.json", BUCKETS, TAGS)
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+    # The role is known each time; one collector the rule walks through is missing.
+    for missing, given in (("ai", {"k8s": FX / "k8s" / "state.json"}), ("k8s", {"ai": FX / "ai" / "inventory.json"}),
+                           ("k8s failed", {"k8s": bad, "ai": FX / "ai" / "inventory.json"})):
+        store, pipe = fresh()
+        try:
+            pipe.snapshot(aws=aws, at=SNAPSHOT_AT, **given)
+        except CollectorError:
+            assert missing == "k8s failed"  # a collector that only ever failed has never run
+        r = pipe.process(iam_event("PutRolePolicy"))
+        assert store.event(r["event_id"])["targets"] == [ROLE], missing
+        assert r["alerts"] == [] and _held(store) == [("DET-AI-002", r["event_id"])], missing
+        pipe.snapshot(**stage1(aws=None))
+        assert len(store.findings(rule_id="DET-AI-002")) == 1 and _held(store) == [], missing
     # Control: with every collector run, the record is decided when it arrives.
     cstore, cpipe = build(tmp_path, iam="aws/iam.json")
     r = cpipe.process(iam_event("PutRolePolicy"))
@@ -323,12 +381,105 @@ def test_detection_findings_keep_their_records_in_data_time(tmp_path):
             pipe.process(json.loads(json.dumps(ev)))
     (fa,), (fb,) = a.findings(rule_id="DET-AI-002"), b.findings(rule_id="DET-AI-002")
     assert fa == fb  # same records, same times, whichever came first
+    put_id = _event_id(PUT_ID)
+    assert changes_of(a)[fa["finding_id"]] == ("DET-AI-002", [("2026-11-14T10:00:00.000000Z", "opened",
+                                                                ("record", put_id))])
     assert fa["first_seen"] == "2026-11-14T10:00:00.000000Z" and fa["last_seen"] == "2026-11-14T10:05:00.000000Z"
     # Control: one record only gives that record's time.
     (tmp_path / "c").mkdir()
     c, pc = build(tmp_path / "c", iam="aws/iam.json")
     pc.process(json.loads(json.dumps(later)))
     assert c.findings(rule_id="DET-AI-002")[0]["first_seen"] == "2026-11-14T10:05:00.000000Z"
+
+
+def test_a_few_orders_give_the_same_model_and_history(tmp_path):
+    later = ("snapshot", {"aws": (later_iam(tmp_path), BUCKETS, TAGS), "at": LATER_AT})
+    s1, delete = ("snapshot", stage1()), ("record", records()["delete"])
+    results = set()
+    for order in ([s1, later, delete], [s1, delete, later], [later, s1, delete], [delete, later, s1]):
+        store, pipe = fresh()
+        for item in order:
+            feed(pipe, item)
+        results.add(json.dumps([live_model(store), changes_of(store)], sort_keys=True))
+    assert len(results) == 1
+    # Control: without the delete the role keeps reports-read, so the model differs.
+    store, pipe = fresh()
+    for item in (s1, later):
+        feed(pipe, item)
+    assert json.dumps([live_model(store), changes_of(store)], sort_keys=True) not in results
+
+
+def test_record_at_the_time_of_a_snapshot_counts_after_it(tmp_path):
+    narrow = ("snapshot", {"aws": (FX / "aws" / "iam.json", BUCKETS, TAGS), "at": LATER_AT})
+    for when, live, changes in (
+            (LATER_AT, ["PATH-AI-001"], [("2026-11-14T10:15:00.000000Z", "opened", "record")]),
+            # Control: a minute earlier, the snapshot at 10:15 shows the policy gone.
+            ("2026-11-14T10:14:00Z", [], [("2026-11-14T10:14:00.000000Z", "opened", "record"),
+                                          ("2026-11-14T10:15:00.000000Z", "resolved", "snapshot")])):
+        put = iam_event("PutRolePolicy")
+        put["eventTime"] = when
+        store, pipe = fresh()
+        for item in (("snapshot", stage1()), narrow, ("record", put)):
+            feed(pipe, item)
+        assert [r for r in open_rules(store) if r.startswith("PATH")] == live, when
+        assert [[c[:2] + (c[2][0],) for c in v[1]] for v in path_history(store)] == [changes], when
+
+
+def test_a_path_that_closes_and_opens_again_is_reopened_in_the_history(tmp_path):
+    again = iam_event("PutRolePolicy")
+    again.update(eventTime="2026-11-14T10:25:00Z", eventID="6f1c2a9e-0000-4000-8000-000000000930")
+    store, pipe = build(tmp_path, iam="aws/iam.json")
+    for ev in (again, iam_event("DeleteRolePolicy"), iam_event("PutRolePolicy")):
+        pipe.process(ev)
+    (h,) = path_history(store)
+    assert [c[1] for c in h[1]] == ["opened", "resolved", "reopened"]
+    assert open_rules(store).count("PATH-AI-001") == 1
+    # Control: without the second put the path ends resolved.
+    (tmp_path / "c").mkdir()
+    cstore, cpipe = build(tmp_path / "c", iam="aws/iam.json")
+    for ev in (iam_event("DeleteRolePolicy"), iam_event("PutRolePolicy")):
+        cpipe.process(ev)
+    assert [c[1] for c in path_history(cstore)[0][1]] == ["opened", "resolved"]
+
+
+def test_history_replay_rebuilds_the_live_model_with_its_cluster_and_outside_range(tmp_path):
+    from codeguardian.v2.history import replay
+
+    # The course layout, plus an allow from one range on the shop pods. The pods see
+    # connections from outside come from another range, so the internet stays denied.
+    layout = json.loads((FX.parent / "netpol" / "shop.json").read_text())
+    layout["items"].append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                            "metadata": {"name": "allow-lb", "namespace": "shop"},
+                            "spec": {"podSelector": {}, "policyTypes": ["Ingress"], "ingress": [
+                                {"from": [{"ipBlock": {"cidr": "203.0.113.0/24"}}],
+                                 "ports": [{"protocol": "TCP", "port": 3000}]}]}})
+    (tmp_path / "shop.json").write_text(json.dumps(layout))
+    store = Store()
+    pipe = Pipeline(store, RULES, FixedClock(NOW), cluster="course", outside=("198.51.100.0/24",))
+    pipe.snapshot(k8s=tmp_path / "shop.json", at=SNAPSHOT_AT)
+    scratch, _ = replay(store, RULES, NOW)
+    assert live_model(scratch) == live_model(store)
+    (edge,) = store.edges(etype="exposes")
+    assert edge["src"].startswith("k8s:service:course/") and edge["attrs"]["ingress_from_outside"] == "denied"
+    # Control: a model whose older AWS snapshot was refused replays to the same live model,
+    # since the newer snapshot supersedes it in data time too.
+    store, pipe = fresh()
+    feed(pipe, ("snapshot", {"aws": (later_iam(tmp_path), BUCKETS, TAGS), "at": LATER_AT}))
+    feed(pipe, ("snapshot", stage1()))
+    scratch, _ = replay(store, RULES, NOW)
+    assert live_model(scratch) == live_model(store)
+
+
+def test_finding_found_after_an_older_snapshot_is_not_dated_before_its_data(tmp_path):
+    store, pipe = fresh()
+    pipe.snapshot(aws=(later_iam(tmp_path), BUCKETS, TAGS), at=LATER_AT)  # the role can read finance
+    pipe.snapshot(**stage1(aws=None))  # pod and agent from 09:55
+    (f,) = store.findings(rule_id="PATH-AI-001")
+    assert f["first_seen"] == "2026-11-14T10:15:00.000000Z"  # not 09:55: the role's policy is from 10:15
+    # Control: when the 09:55 data already holds the policy, the path dates from 09:55.
+    cstore, _ = build(tmp_path)  # iam-wide: reports-read at 09:55
+    (cf,) = cstore.findings(rule_id="PATH-AI-001")
+    assert cf["first_seen"] == "2026-11-14T09:55:00.000000Z"
 
 
 # --- the history in the output ----------------------------------------------------------------------

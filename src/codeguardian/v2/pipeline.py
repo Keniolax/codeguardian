@@ -84,19 +84,28 @@ class Pipeline:
             loaders.append((k8s_collector.SOURCE, lambda: k8s_collector.load(k8s)))
         if ai is not None:
             loaders.append((ai_collector.SOURCE, lambda: ai_collector.load(ai)))
+        marked = False
         for name, load in loaders:
             try:
                 loaded[name] = load()
             except CollectorError as exc:
-                self.store.record_source(name, False, at, str(exc))
-                errors.append(str(exc))
+                last = (self.store.source(name) or {}).get("last_success")
+                if last is not None and at < last:
+                    # Older than the last good snapshot: it could not change the model, so
+                    # its failure does not make the newer facts stale either.
+                    self.store.bump("snapshot_older_failed")
+                    errors.append(f"{exc} (older than the last applied snapshot of {name}; nothing changed)")
+                else:
+                    self.store.record_source(name, False, at, str(exc))
+                    errors.append(str(exc))
+                    marked = True
         contents = {name: snapshot_content(name, data, self.cluster, self.outside) for name, data in loaded.items()}
         # A failed collector makes its facts stale, which the rules' notes must show.
-        changes = self.apply_snapshot(contents, at, reevaluate=bool(errors))
+        changes = self.apply_snapshot(contents, at, reevaluate=marked)
         self.store.commit()
         if errors:
             exc = CollectorError("; ".join(errors))
-            exc.changes = changes
+            exc.changes, exc.marked_stale = changes, marked
             raise exc
         return changes
 
@@ -151,10 +160,17 @@ class Pipeline:
         if aws_collector.SOURCE in admitted:
             self._apply_pending()
         self.link(self._link_time(at))
-        found = self.evaluate_all(at)
+        found = self.evaluate_all(self._model_time(at))
         changes["opened"], changes["resolved"] = found["opened"], found["resolved"]
         self._decide_held(changes)
         return changes
+
+    def _model_time(self, at):
+        """The time a re-evaluation is stamped with. After an older snapshot or record lands
+        on a newer snapshot of another collector, the model mixes both, and a finding it
+        shows is known only from the newer one: never date it earlier than its data."""
+        times = [at] + [s["last_success"] for s in self.store.sources() if s["last_success"]]
+        return max(times)
 
     def _link_time(self, at):
         """IRSA edges come from the role and the service account together, so they are as
@@ -370,7 +386,7 @@ class Pipeline:
         if status == "pending":
             self.store.bump("model_change_role_not_in_model")
         self.store.add_model_change(ev["event_id"], ev["time"], change, status)
-        return self.evaluate_delta(delta, ev["time"])
+        return self.evaluate_delta(delta, self._model_time(ev["time"]))
 
     def _mark(self, role, a, ev, text):
         self.store.bump("model_change_not_evaluated")
