@@ -1,0 +1,234 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "metadata": {
+    "resourceVersion": ""
+  },
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "default",
+        "namespace": "shop",
+        "uid": "00000000-0000-4000-8000-000000000501",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "default",
+        "namespace": "client",
+        "uid": "00000000-0000-4000-8000-000000000502",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "ServiceAccount",
+      "metadata": {
+        "name": "default",
+        "namespace": "outsider",
+        "uid": "00000000-0000-4000-8000-000000000503",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "shop-web-5d8f",
+        "namespace": "shop",
+        "uid": "00000000-0000-4000-8000-000000000504",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000",
+        "labels": {
+          "app": "shop"
+        }
+      },
+      "spec": {
+        "serviceAccountName": "default",
+        "nodeName": "node-a",
+        "containers": [
+          {
+            "name": "shop",
+            "image": "registry.example.com/shop:1.0.0",
+            "ports": [
+              {
+                "name": "http",
+                "containerPort": 3000,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "hostIP": "198.51.100.21",
+        "podIP": "198.51.100.41"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "client-7c4b",
+        "namespace": "client",
+        "uid": "00000000-0000-4000-8000-000000000505",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000",
+        "labels": {
+          "app": "client"
+        }
+      },
+      "spec": {
+        "serviceAccountName": "default",
+        "nodeName": "node-a",
+        "containers": [
+          {
+            "name": "client",
+            "image": "registry.example.com/client:1.0.0"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "hostIP": "198.51.100.21",
+        "podIP": "198.51.100.42"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "outsider-2f9a",
+        "namespace": "outsider",
+        "uid": "00000000-0000-4000-8000-000000000506",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000",
+        "labels": {
+          "app": "outsider"
+        }
+      },
+      "spec": {
+        "serviceAccountName": "default",
+        "nodeName": "node-a",
+        "containers": [
+          {
+            "name": "outsider",
+            "image": "registry.example.com/outsider:1.0.0"
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "hostIP": "198.51.100.21",
+        "podIP": "198.51.100.43"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "shop-web",
+        "namespace": "shop",
+        "uid": "00000000-0000-4000-8000-000000000507",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000"
+      },
+      "spec": {
+        "type": "LoadBalancer",
+        "selector": {
+          "app": "shop"
+        },
+        "clusterIP": "198.51.100.110",
+        "ports": [
+          {
+            "port": 80,
+            "targetPort": "http",
+            "protocol": "TCP"
+          }
+        ]
+      },
+      "status": {
+        "loadBalancer": {
+          "ingress": [
+            {
+              "ip": "203.0.113.20"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "shop",
+        "uid": "00000000-0000-4000-8000-000000000510",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000",
+        "labels": {
+          "kubernetes.io/metadata.name": "shop"
+        }
+      },
+      "spec": {
+        "finalizers": [
+          "kubernetes"
+        ]
+      },
+      "status": {
+        "phase": "Active"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "client",
+        "uid": "00000000-0000-4000-8000-000000000511",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000",
+        "labels": {
+          "kubernetes.io/metadata.name": "client",
+          "access": "shop"
+        }
+      },
+      "spec": {
+        "finalizers": [
+          "kubernetes"
+        ]
+      },
+      "status": {
+        "phase": "Active"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "metadata": {
+        "name": "outsider",
+        "uid": "00000000-0000-4000-8000-000000000512",
+        "creationTimestamp": "2026-11-10T08:00:00Z",
+        "resourceVersion": "2000",
+        "labels": {
+          "kubernetes.io/metadata.name": "outsider"
+        }
+      },
+      "spec": {
+        "finalizers": [
+          "kubernetes"
+        ]
+      },
+      "status": {
+        "phase": "Active"
+      }
+    }
+  ]
+}

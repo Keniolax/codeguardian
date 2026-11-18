@@ -137,7 +137,7 @@ def test_every_order_of_two_snapshots_and_four_change_records_ends_the_same(tmp_
     assert [v for v in json.loads(histories.pop()).values() if v[0] == "PATH-AI-001"] == \
         [["PATH-AI-001", [list(c[:2]) + [list(c[2])] for c in OPEN_TO_CLOSE[0][1]]]]
     assert sorted(json.loads(f)["rule_id"] for f in json.loads(opens.pop())) == \
-        ["DET-AI-002", "POST-IAM-001", "POST-K8S-001"]
+        ["DET-AI-002", "PATH-EXPOSED-001", "PATH-EXPOSED-001", "POST-IAM-001", "POST-K8S-001"]
 
 
 def test_path_open_from_10_00_to_10_20_shows_in_the_history_when_the_delete_arrives_first(tmp_path):
@@ -505,7 +505,7 @@ def test_record_at_the_time_of_a_snapshot_counts_after_it(tmp_path):
         store, pipe = fresh()
         for item in (("snapshot", stage1()), narrow, ("record", put)):
             feed(pipe, item)
-        assert [r for r in open_rules(store) if r.startswith("PATH")] == live, when
+        assert [r for r in open_rules(store) if r.startswith("PATH-AI")] == live, when
         assert [[c[:2] + (c[2][0],) for c in v[1]] for v in path_history(store)] == [changes], when
 
 
@@ -527,7 +527,7 @@ def test_record_at_a_snapshots_time_counts_after_it_whichever_arrives_first(tmp_
                 store, pipe = fresh()
                 for item in [("snapshot", stage1())] + order:
                     feed(pipe, item)
-                assert [r for r in open_rules(store) if r.startswith("PATH")] == live, (when, len(recs))
+                assert [r for r in open_rules(store) if r.startswith("PATH-AI")] == live, (when, len(recs))
                 marked = any("two different changes" in m for m in store.entity(ROLE)["attrs"]["not_evaluated"])
                 assert marked == (when == LATER_AT and len(recs) == 2), (when, len(recs))
                 results.add(json.dumps([live_model(store), open_findings(store), changes_of(store)], sort_keys=True))

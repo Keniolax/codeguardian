@@ -383,7 +383,11 @@ def test_d_alert_outside_the_time_window_does_not_join(tmp_path):
     late["time"] = "2026-11-14T15:00:00.000000000Z"
     _replay(pipe, events + [late])
     token = store.findings(rule_id="DET-RT-002")[0]
-    assert _incident_of(store, token["finding_id"])["finding_ids"] == [token["finding_id"]]
+    inc = _incident_of(store, token["finding_id"])
+    # The late alert opens an incident of its own. Open state findings on its pod join it
+    # (the pod is exposed, PATH-EXPOSED-001); no other detection does.
+    assert [f for f in inc["finding_ids"] if store.finding(f)["kind"] == "detection"] == [token["finding_id"]]
+    assert inc["first_seen"] == "2026-11-14T15:00:00.000000Z"
 
 
 # --- E: real time, and only the affected rules re-run -----------------------------------------

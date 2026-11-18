@@ -12,11 +12,12 @@ import pytest
 
 from codeguardian.cli import main as cli
 from codeguardian.v2 import render
+from codeguardian.v2.pipeline import Pipeline
 from codeguardian.v2.rules import RULES_DIR, SHADOW_NOTES, RuleError, load_rules, shadow, validate
-from codeguardian.v2.schema import edge_id, ts
+from codeguardian.v2.schema import FixedClock, edge_id, ts
 from codeguardian.v2.store import Store
-from test_v2_netpol import DENY, EVERY, LAYOUT, allow
-from v2_helpers import FINANCE, FX, NOW, POD, SNAPSHOT_AT, SVC, build, fixture
+from test_v2_netpol import DENY, EVERY, LAYOUT, SHOP, SHOP_SVC, allow
+from v2_helpers import FINANCE, FX, NOW, POD, SNAPSHOT_AT, SVC, build, fixture, k8s_item
 
 SUFFIX = ", held back only by NetworkPolicy"
 UNREADABLE_TAGS = {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}
@@ -162,6 +163,130 @@ def test_findings_list_the_np_finding_and_the_swap_from_the_command_line(tmp_pat
                                                              "- [resolved] low PATH-AI-001-NP v2"]
 
 
+# --- the course layout: a pod with no agent, held back only by its namespace's policies -------
+
+EXPOSED = "PATH-EXPOSED-001"
+EXPOSED_TITLE = "A pod reachable from the internet through a Service"
+INTERNET = "net:internet:any"
+BOTH = ("default-deny-ingress", "allow-shop-clients")
+SHOP_NO_POLICY = LAYOUT.parent / "shop-no-policy.json"
+
+
+def _layout(drop=()):
+    data = json.loads(LAYOUT.read_text())
+    data["items"] = [i for i in data["items"] if not (i["kind"] == "NetworkPolicy" and i["metadata"]["name"] in drop)]
+    return data
+
+
+def _course_pipe():
+    store = Store()
+    return store, Pipeline(store, load_rules(), FixedClock(NOW), cluster="course")
+
+
+def _open_paths(store):
+    return sorted(f["rule_id"] for f in store.findings(status="open") if f["kind"] == "path")
+
+
+def test_course_layout_gives_an_np_finding_for_the_shop_pod_and_no_open_path(tmp_path):
+    store, pipe = _course_pipe()
+    _snap(pipe, tmp_path, "layout", _layout(), SNAPSHOT_AT)
+    assert store.edge(edge_id("exposes", SHOP_SVC, SHOP))["attrs"]["ingress_from_outside"] == "denied"
+    assert _open_paths(store) == [_np(EXPOSED)]
+    (held,) = _open(store, _np(EXPOSED))
+    # Control: the same layout without its two policies gives the open path and no -NP finding.
+    plain, pipe = _course_pipe()
+    _snap(pipe, tmp_path, "open", _layout(drop=BOTH), SNAPSHOT_AT)
+    assert _open_paths(plain) == [EXPOSED]
+    (path,) = _open(plain, EXPOSED)
+    assert plain.findings(rule_id=_np(EXPOSED)) == []
+    assert held["path"] == path["path"] == [INTERNET, SHOP_SVC, SHOP]
+    assert held["primary_entity"] == path["primary_entity"] == SHOP
+    assert held["finding_id"] != path["finding_id"]
+    assert (path["severity"], path["title"]) == ("medium", EXPOSED_TITLE)
+    assert (held["severity"], held["title"]) == ("low", EXPOSED_TITLE + SUFFIX)
+    assert set(SHADOW_NOTES) <= set(held["notes"])
+    assert not set(SHADOW_NOTES) & set(path["notes"])
+
+
+def test_removing_both_shop_policies_swaps_the_findings_and_restoring_them_swaps_back(tmp_path):
+    store, pipe = _course_pipe()
+    _snap(pipe, tmp_path, "open", _layout(drop=BOTH), SNAPSHOT_AT)
+    (before,) = _open(store, EXPOSED)
+
+    _snap(pipe, tmp_path, "layout", _layout(), "2026-11-14T10:00:00Z")
+    (held,) = _open(store, _np(EXPOSED))
+    assert _open(store, EXPOSED) == []
+    assert store.finding(before["finding_id"])["status"] == "resolved"
+
+    _snap(pipe, tmp_path, "open-again", _layout(drop=BOTH), "2026-11-14T10:05:00Z")
+    (after,) = _open(store, EXPOSED)
+    assert _open(store, _np(EXPOSED)) == []
+    assert store.finding(held["finding_id"])["status"] == "resolved"
+    assert (after["finding_id"], after["first_seen"]) == (before["finding_id"], before["first_seen"])
+
+    _snap(pipe, tmp_path, "layout-again", _layout(), "2026-11-14T10:10:00Z")
+    (again,) = _open(store, _np(EXPOSED))
+    assert _open(store, EXPOSED) == []
+    assert (again["finding_id"], again["first_seen"]) == (held["finding_id"], held["first_seen"])
+
+
+def test_removing_only_the_default_deny_leaves_the_np_finding_and_no_open_path(tmp_path):
+    # allow-shop-clients still selects the shop pod and admits only pods in namespaces
+    # labelled access=shop, so a connection from outside stays denied and nothing swaps.
+    store, pipe = _course_pipe()
+    _snap(pipe, tmp_path, "layout", _layout(), SNAPSHOT_AT)
+    (held,) = _open(store, _np(EXPOSED))
+    _snap(pipe, tmp_path, "no-deny", _layout(drop=("default-deny-ingress",)), "2026-11-14T10:00:00Z")
+    assert store.edge(edge_id("exposes", SHOP_SVC, SHOP))["attrs"] == {
+        "ingress_from_outside": "denied", "network_policies": ["NetworkPolicy shop/allow-shop-clients"]}
+    assert _open(store, EXPOSED) == []
+    (still,) = _open(store, _np(EXPOSED))
+    assert (still["finding_id"], still["first_seen"]) == (held["finding_id"], held["first_seen"])
+    # Control: the same snapshot with the allow open to any source on TCP 3000 swaps them.
+    data = _layout(drop=("default-deny-ingress",))
+    del k8s_item(data, "NetworkPolicy", "allow-shop-clients")["spec"]["ingress"][0]["from"]
+    _snap(pipe, tmp_path, "any-source", data, "2026-11-14T10:05:00Z")
+    assert len(_open(store, EXPOSED)) == 1
+    assert _open(store, _np(EXPOSED)) == []
+
+
+def test_course_layout_policy_not_evaluated_keeps_the_open_path_and_gives_no_np_finding(tmp_path):
+    def with_policy(name, operator, values):
+        data = _layout()
+        expr = {"key": "app", "operator": operator, "values": values}
+        data["items"].append(allow("unknown", EVERY, {"matchExpressions": [expr]}, ns="shop"))
+        store, pipe = _course_pipe()
+        _snap(pipe, tmp_path, name, data, SNAPSHOT_AT)
+        return store
+
+    store = with_policy("unknown", "Gt", ["1"])
+    assert store.edge(edge_id("exposes", SHOP_SVC, SHOP))["attrs"]["ingress_from_outside"] == "not evaluated"
+    (f,) = _open(store, EXPOSED)
+    assert any("operator 'Gt'" in n for n in f["notes"])
+    assert store.findings(rule_id=_np(EXPOSED)) == []
+    # Control: the same policy with an operator that is read, selecting another pod.
+    store = with_policy("known", "In", ["other"])
+    assert _open(store, EXPOSED) == []
+    assert len(_open(store, _np(EXPOSED))) == 1
+
+
+def test_findings_list_the_course_layout_np_finding_and_the_swap_from_the_command_line(tmp_path, capsys):
+    expected = json.loads(LAYOUT.read_text())
+    expected["items"] = [i for i in expected["items"] if i["kind"] != "NetworkPolicy"]
+    assert json.loads(SHOP_NO_POLICY.read_text()) == expected  # the layout without its two policies
+    db = str(tmp_path / "course.db")
+
+    def ingest(k8s, at):
+        assert cli(["ingest", "--db", db, "--now", NOW, "--at", at, "--cluster", "course", "--k8s", str(k8s)]) == 0
+        assert cli(["findings", "--db", db, "--now", NOW]) == 0
+        return sorted(line for line in capsys.readouterr().out.splitlines() if "PATH-" in line)
+
+    assert ingest(LAYOUT, SNAPSHOT_AT) == [f"- [open] low {EXPOSED}-NP v1: {EXPOSED_TITLE}{SUFFIX}"]
+    # Control: the layout without its two policies, taken later. The two findings swap.
+    assert ingest(SHOP_NO_POLICY, "2026-11-14T10:00:00Z") == [f"- [open] medium {EXPOSED} v1: {EXPOSED_TITLE}",
+                                                               f"- [resolved] low {EXPOSED}-NP v1: {EXPOSED_TITLE}{SUFFIX}"]
+
+
 # --- the rule loader --------------------------------------------------------------------------
 
 def _gated(*gates):
@@ -181,7 +306,7 @@ GATE = {"attr": "ingress_from_outside", "op": "ne", "value": "denied"}
 def test_loader_gives_each_gated_path_rule_one_twin_after_it():
     rules = load_rules()
     ids = [r["id"] for r in rules]
-    for base in ("PATH-AI-001", "PATH-AI-002"):
+    for base in ("PATH-AI-001", "PATH-AI-002", "PATH-EXPOSED-001"):
         assert ids[ids.index(base) + 1] == _np(base)
         rule, twin = rules[ids.index(base)], rules[ids.index(base) + 1]
         assert (twin["severity"], twin["version"], twin["frameworks"]) == ("low", rule["version"], [])

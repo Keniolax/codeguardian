@@ -80,3 +80,28 @@ dir = "out"
 to = "s3_bucket"
 edge_allows = ["s3:GetObject"]
 where = [{ attr = "tags_error", op = "nonempty" }]
+
+# Any pod reachable from the internet through a Service, agent or not. It is the
+# shortest walk the NetworkPolicy gate decides, so a pod that only a policy holds back
+# gives the -NP twin even when it holds no agent and no identity.
+[[rule]]
+id = "PATH-EXPOSED-001"
+version = 1
+kind = "path"
+severity = "medium"
+title = "A pod reachable from the internet through a Service"
+frameworks = []
+start = "internet"
+
+[[rule.hops]]
+edge = "reachable_from"
+dir = "in"
+to = "service"
+
+[[rule.hops]]
+edge = "exposes"
+dir = "out"
+to = "pod"
+# The gate of this rule: only a NetworkPolicy deny closes the hop, and the -NP twin finds
+# the pods it closes.
+edge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]

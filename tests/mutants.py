@@ -61,6 +61,13 @@ TWIN_TEST = "test_loader_gives_each_gated_path_rule_one_twin_after_it"
 FORM_TEST = "test_loader_refuses_a_networkpolicy_test_that_could_read_not_evaluated_as_closed"
 FORMS = ("eq-allowed", "in-allowed", "ne-not-evaluated", "nonempty")
 CLI_NP_TEST = "test_findings_list_the_np_finding_and_the_swap_from_the_command_line"
+COURSE_NP = "test_course_layout_gives_an_np_finding_for_the_shop_pod_and_no_open_path"
+COURSE_SWAP = "test_removing_both_shop_policies_swaps_the_findings_and_restoring_them_swaps_back"
+ONLY_DENY = "test_removing_only_the_default_deny_leaves_the_np_finding_and_no_open_path"
+COURSE_NOT_EVAL = "test_course_layout_policy_not_evaluated_keeps_the_open_path_and_gives_no_np_finding"
+COURSE_CLI = "test_findings_list_the_course_layout_np_finding_and_the_swap_from_the_command_line"
+EXPOSED_GATE = ('# the pods it closes.\n'
+                'edge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]\n')
 EVERY_ORDER = "test_every_order_of_two_snapshots_and_four_change_records_ends_the_same"
 OLDER = "test_snapshot_older_than_the_last_applied_is_refused_and_changes_nothing"
 PER_SOURCE = "test_refusal_is_per_collector"
@@ -445,7 +452,7 @@ MUTANTS = [
     ("pod and namespace selectors match outside traffic", NP,
      "        return False  # these select pods; an outside address is not a pod",
      "        return True  # these select pods; an outside address is not a pod",
-     [T("test_allow_for_a_namespace_label_does_not_open_the_path_from_the_internet", NET)]),
+     [T("test_allow_for_a_namespace_label_does_not_open_the_path_from_the_internet", NET), T(ONLY_DENY, SHADOW)]),
     ("ipBlock except ignored", NP, "        inside = [e for e in excepts if e.overlaps(part)]", "        inside = []",
      [T(IPBLOCK_TEST, NET)]),
     ("ipBlock matches a source range it does not hold", NP,
@@ -469,7 +476,7 @@ MUTANTS = [
     ("policyTypes ignored", NP, "    return direction in types", "    return True",
      [T("test_egress_only_policy_does_not_isolate_the_pod_for_ingress", NET)]),
     ("In read as NotIn", NP, '        return found if op == "In" else not found', "        return not found",
-     [T(f"{EXPR_TEST}[in-selects]", NET), T(f"{EXPR_TEST}[in-other]", NET)]),
+     [T(f"{EXPR_TEST}[in-selects]", NET), T(f"{EXPR_TEST}[in-other]", NET), T(COURSE_NOT_EVAL, SHADOW)]),
     ("NotIn read as In", NP, '        return found if op == "In" else not found', "        return found",
      [T(f"{EXPR_TEST}[notin-selects]", NET), T(f"{EXPR_TEST}[notin-other]", NET)]),
     ("NotIn requires the key to be present", NP, '        return found if op == "In" else not found',
@@ -486,7 +493,8 @@ MUTANTS = [
      'not found once on the pod; not evaluated")\n            return False', [T(f"{UNHANDLED_TEST}[named-port]", NET)]),
     ("unknown operator read as no match", NP,
      'with {len(values)} values not evaluated")\n    return None',
-     'with {len(values)} values not evaluated")\n    return False', [T(f"{UNHANDLED_TEST}[unknown-operator]", NET)]),
+     'with {len(values)} values not evaluated")\n    return False',
+     [T(f"{UNHANDLED_TEST}[unknown-operator]", NET), T(COURSE_NOT_EVAL, SHADOW)]),
     ("unknown policyTypes read as not applying", NP,
      'notes.add(f"{what}: policyTypes {_clip(types)} not evaluated")\n        return None',
      'notes.add(f"{what}: policyTypes {_clip(types)} not evaluated")\n        return False',
@@ -646,31 +654,51 @@ MUTANTS = [
     # Paths that only a NetworkPolicy closes (slice netpol-shadow).
     ("no -NP twin derived", RULES, "            for r in (rule, shadow(rule)):", "            for r in (rule, None):",
      [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW), T(NOT_EVAL_TEST, SHADOW),
-                                                         T(TWIN_TEST, SHADOW), T(CLI_NP_TEST, SHADOW)]),
+                                                         T(TWIN_TEST, SHADOW), T(CLI_NP_TEST, SHADOW),
+                                                         T(COURSE_NP, SHADOW), T(COURSE_SWAP, SHADOW),
+                                                         T(ONLY_DENY, SHADOW), T(COURSE_CLI, SHADOW)]),
     ("PATH-AI-002 drops its NetworkPolicy condition", V2 + "rules/paths.toml",
      '# As in PATH-AI-001: only a NetworkPolicy deny closes this hop.\n'
      'edge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]\n',
      "# As in PATH-AI-001: only a NetworkPolicy deny closes this hop.\n", [T(f"{NP_TEST}[PATH-AI-002]", SHADOW)]),
+    ("PATH-EXPOSED-001 drops its NetworkPolicy condition", V2 + "rules/paths.toml", EXPOSED_GATE,
+     "# the pods it closes.\n",
+     [T(COURSE_NP, SHADOW), T(COURSE_SWAP, SHADOW), T(ONLY_DENY, SHADOW), T(COURSE_NOT_EVAL, SHADOW),
+      T(COURSE_CLI, SHADOW), T(TWIN_TEST, SHADOW)]),
+    ("PATH-EXPOSED-001 needs an agent on the pod", V2 + "rules/paths.toml", EXPOSED_GATE,
+     EXPOSED_GATE + 'require = [{ edge = "contains", dir = "out", to = "agent" }]\n',
+     [T(COURSE_NP, SHADOW), T(COURSE_CLI, SHADOW)]),
+    ("a policy with ingress rules does not isolate the pod", NP, "        isolated.append(applies)",
+     "        isolated.append(_and(applies, not rules))", [T(ONLY_DENY, SHADOW)]),
+    ("a rule with no from admits no source", NP,
+     "    from_ok = _or(*[_peer(p, policy_ns, source, what, notes) for p in peers]) if peers else True",
+     "    from_ok = _or(*[_peer(p, policy_ns, source, what, notes) for p in peers]) if peers else False",
+     [T(ONLY_DENY, SHADOW)]),
     ("twin keeps its rule's severity", RULES, '"severity": SHADOW_SEVERITY,', '"severity": rule["severity"],',
      [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(TWIN_TEST, SHADOW)]),
     ("twin title not marked", RULES, "\"title\": f\"{rule['title']}, held back only by NetworkPolicy\",",
-     '"title": rule["title"],', [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES]),
+     '"title": rule["title"],', [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(COURSE_NP, SHADOW),
+                                                                                   T(COURSE_CLI, SHADOW)]),
     ("twin keeps the gate, so it repeats its rule", RULES,
      '    hop["edge_where"] = [HELD_BACK if c == GATE else c for c in hop["edge_where"]]',
      '    hop["edge_where"] = list(hop["edge_where"])',
-     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW), T(TWIN_TEST, SHADOW)]),
+     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW), T(TWIN_TEST, SHADOW),
+                                                         T(COURSE_NP, SHADOW), T(COURSE_SWAP, SHADOW)]),
     ("twin drops the gate, so it also fires on an open path", RULES,
      '    hop["edge_where"] = [HELD_BACK if c == GATE else c for c in hop["edge_where"]]',
      '    hop["edge_where"] = [c for c in hop["edge_where"] if c != GATE]',
-     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW)]),
+     [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(SWAP_TEST, SHADOW), T(COURSE_NP, SHADOW),
+                                                         T(COURSE_SWAP, SHADOW), T(COURSE_CLI, SHADOW)]),
     ("not evaluated read as held back by policy", RULES,
      'HELD_BACK = {"attr": "ingress_from_outside", "op": "eq", "value": "denied"}',
-     'HELD_BACK = {"attr": "ingress_from_outside", "op": "ne", "value": "allowed"}', [T(NOT_EVAL_TEST, SHADOW)]),
+     'HELD_BACK = {"attr": "ingress_from_outside", "op": "ne", "value": "allowed"}',
+     [T(NOT_EVAL_TEST, SHADOW), T(COURSE_NOT_EVAL, SHADOW)]),
     ("twin walks only up to the gated hop", RULES, '    hops = copy.deepcopy(rule["hops"])',
      '    hops = copy.deepcopy(rule["hops"][:gated[0] + 1])',
      [T("test_np_finding_needs_every_other_hop_of_its_path", SHADOW), T(TWIN_TEST, SHADOW)]),
     ("rule notes not put on its findings", V2 + "paths.py", '        notes = set(rule.get("notes", []))',
-     "        notes = set()", [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(CLI_NP_TEST, SHADOW)]),
+     "        notes = set()", [T(f"{NP_TEST}[{r}]", SHADOW) for r in NP_RULES] + [T(CLI_NP_TEST, SHADOW),
+                                                                            T(COURSE_NP, SHADOW)]),
     ("any test of ingress_from_outside accepted", RULES, "                    _need(c in (GATE, HELD_BACK), rule,",
      "                    _need(True, rule,", [T(f"{FORM_TEST}[{f}]", SHADOW) for f in FORMS]),
     ("only the op of an ingress_from_outside test checked", RULES,
