@@ -110,7 +110,8 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   stdin and joined to the model. `PutRolePolicy` and `DeleteRolePolicy` change the model
   at once, in whatever order the records arrive. `AttachRolePolicy` carries only an ARN,
   so an unknown policy is marked.
-- One path finding covers the chain; removing any one of its six edges removes it.
+- One path finding (`PATH-AI-001`) covers the chain; removing any one of its six edges
+  removes it.
   The runtime alerts, the cloud events and the path finding form one incident. A shell
   in another pod on the same node stays in its own incident.
 - A response plan uses a catalog of three actions and prints commands for a person to
@@ -151,8 +152,15 @@ path rules cross that edge unless the answer is denied.
 
 A path that a NetworkPolicy closes still gets a finding. "Denied" holds only if the
 cluster's network plugin enforces policy, and the model cannot see the plugin. The rule
-loader gives each path rule that tests the edge's answer a twin: `PATH-AI-001-NP` and
-`PATH-AI-002-NP`. A twin finds the same path, but only where the edge says denied.
+loader gives each path rule that tests the edge's answer a twin: `PATH-AI-001-NP`,
+`PATH-AI-002-NP` and `PATH-EXPOSED-001-NP`. A twin finds the same path, but only where the
+edge says denied.
+
+`PATH-EXPOSED-001` finds each pod that the internet can reach through a Service, with or
+without an agent, at severity medium. Its path has two hops: internet to Service, and
+Service to pod. So its twin also covers a pod that holds no agent and no identity, such as
+the shop pod in the course layout below. On the chain it finds two pods: the agent's pod
+and `web/frontend`.
 
 - Its finding has severity low, and its title ends "held back only by NetworkPolicy".
   One note names the network plugin. A second note names the source address that the
@@ -211,6 +219,22 @@ N=fixtures/netpol
 .venv/bin/python -m codeguardian reach --db course.db --now 2026-11-14T10:30:00Z \
   --from outsider/outsider-2f9a --to shop/shop-web-5d8f --port 3000; echo "exit $?"
 ```
+
+On this layout, `findings` lists one open `PATH-EXPOSED-001-NP` finding for the shop pod
+and no open path. `fixtures/netpol/shop-no-policy.json` is the same layout without its two
+policies. A later snapshot of it swaps the two findings:
+
+```
+.venv/bin/python -m codeguardian findings --db course.db --now 2026-11-14T10:30:00Z
+.venv/bin/python -m codeguardian ingest --db course.db --now 2026-11-14T10:30:00Z --at 2026-11-14T10:00:00Z \
+  --cluster course --k8s $N/shop-no-policy.json
+.venv/bin/python -m codeguardian findings --db course.db --now 2026-11-14T10:30:00Z
+```
+
+Removing only the default deny does not swap them. `allow-shop-clients` still selects the
+shop pod and admits only pods in namespaces labelled `access=shop`. So a connection from
+outside the cluster is still denied, and the `-NP` finding stays open. A test checks this
+case.
 
 `fixtures/netpol/agents-deny.json` is the chain's Kubernetes state plus one policy: a
 default deny of ingress in namespace `agents`. With it, the chain gives
@@ -297,33 +321,45 @@ The least privilege the export needs:
 - Local only: `kubectl config current-context` reads the kubeconfig, and
   `git check-ignore` reads the repository.
 
-Measured on 2026-11-17 on the `v2/netpol-shadow` branch, except the M1 speed, which was
-measured at `dd2dff1`:
+Measured on 2026-11-18 at commit `e357784` on the `v2/netpol-shadow` branch, which also
+holds slices 1 and 2, except the M1 speed, which was measured at `dd2dff1`:
 
-- 219 tests pass (25 for v1, 194 for v2; 53 are for NetworkPolicy and 19 for paths that
-  only a policy closes and for the exit codes of `reach`). The mutation run removes 179
-  controls one at a time and runs the tests that name each one: 256 mutant-test pairs,
-  164 distinct test cases, all fail without their control. One case, a pod running as a
+- 246 tests pass (25 for v1, 221 for v2; 53 are for NetworkPolicy and 24 for paths that
+  only a policy closes and for the exit codes of `reach`). The mutation run removes 235
+  controls one at a time and runs the tests that name each one: 344 mutant-test pairs,
+  191 distinct test cases, all fail without their control. One case, a pod running as a
   different service account, has no mutant of its own; that edge is absent from the
-  input itself. In the NetworkPolicy and `-NP` tests every parametrized case has a mutant
-  of its own, and the run fails if one does not.
-- On the chain with `agents-deny.json`, `findings` lists one open `PATH-AI-001-NP`
-  finding and no open path. After the snapshot without the policy, it lists
-  `PATH-AI-001` open with ID `5e4a4aa3`, the same ID as in the chain demo, and the
-  `-NP` finding resolved.
+  input itself. In the NetworkPolicy, `-NP` and ordering tests every parametrized case
+  has a mutant of its own, and the run fails if one does not.
 - On the course layout (3 namespaces, 3 pods, 1 Service, 2 policies), `reach` answers
   allowed for `client` to `shop` on TCP 3000 and denied for `outsider`. The Service's
-  edge answers denied for a connection from outside the cluster.
+  edge answers denied for a connection from outside the cluster, so `findings` lists one
+  open `PATH-EXPOSED-001-NP` finding for the shop pod and no open path. After the
+  snapshot without the two policies, it lists `PATH-EXPOSED-001` open for the shop pod
+  and the `-NP` finding resolved.
+- On the chain with `agents-deny.json`, `findings` lists `PATH-AI-001-NP` and
+  `PATH-EXPOSED-001-NP` open on paths through the agent's pod, no open `PATH-AI-001`, and
+  `PATH-EXPOSED-001` open for `web/frontend`, which the policy does not select. After the snapshot without
+  the policy, it lists `PATH-AI-001` open with ID `5e4a4aa3` and `PATH-EXPOSED-001` open
+  for the agent's pod with ID `6fbaf4c8`, the same IDs as in the chain demo, and both
+  `-NP` findings resolved.
+- In the chain demo, incident `83db1215` keeps its ID and now holds eight rules:
+  `PATH-EXPOSED-001` for the agent's pod joins the seven it held before. The plan gives
+  the same two steps, because no action in the catalog follows from an exposed pod.
+  The recorded model answer does not mention the new finding, and `explain` lists it as
+  "not explained by the model".
 - 10,010 events (the 10 chain records and 10,000 generated benign records, seed 7),
   each processed in full and committed to an SQLite file in WAL mode with
   `synchronous=NORMAL`, so there is no fsync per commit. Apple M1, macOS 26.6.2, Python
   3.12.14, three runs: 5,969 to 6,527 events per second; per event p50 0.10 to 0.11 ms,
   p95 0.38 to 0.45 ms, max 6.6, 11.4 and 7.1 ms. The chain incident held the same seven
   rules as in a run without noise, and the path finding ended resolved.
-- The `-NP` twins double the number of path rules that run on each change. In a cloud
-  container (x86_64 Linux, Python 3.12.3), three runs each: 2,976 to 3,040 events per
-  second with the twins, and 2,963 to 3,179 without them (branch `v2/netpol`). Each
-  chain incident held the same seven rules.
+- `PATH-EXPOSED-001` and the three `-NP` twins take the path rules from two to six. In a
+  cloud container (x86_64 Linux, Python 3.12.3), three runs of each in turn: 2,942 to
+  3,300 events per second on this branch (p50 0.19 to 0.22 ms, p95 0.83 to 0.90 ms), and
+  3,215 to 3,297 on `main` at `53851b8`, which has neither (p50 0.20 ms, p95 0.76 to
+  0.78 ms). The chain incident held eight rules on this branch and seven on `main`, and
+  the path finding ended resolved on both.
 
 Measured on 2026-11-17 at commit `691bfdd`, for the ordering of snapshots and records:
 
@@ -401,3 +437,9 @@ What was learned:
   review found this fault with such an input, and found two more order faults: a failed
   export that an older good one cleared, and a refused snapshot that read as applied
   when it was sent again.
+- A twin finds only what its rule finds. The `-NP` twins of the two AI rules could not
+  cover the course layout, because its shop pod holds no agent. A rule with two hops,
+  internet to Service to pod, gives a twin that covers any exposed pod. Adding that rule
+  changed four older tests: three listed every open path rule, and one expected a late
+  alert's incident to hold that alert alone. An open finding on the alert's pod now joins
+  that incident too.
