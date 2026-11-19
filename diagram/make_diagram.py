@@ -1,4 +1,4 @@
-"""Writes architecture.excaliflow (Excalidraw JSON that Excaliflow imports)."""
+"""Write the Week 14 and Week 17 architecture sources for Excaliflow."""
 
 import json
 import random
@@ -55,6 +55,13 @@ def arrow(x1, y1, x2, y2, color="#525252", dashed=False):
          endArrowhead="arrow")
 
 
+def write_diagram(filename, source):
+    doc = {"type": "excalidraw", "version": 2, "source": source,
+           "appState": {"gridSize": None, "viewBackgroundColor": "#ffffff"}, "elements": els, "files": {}}
+    Path(__file__).with_name(filename).write_text(json.dumps(doc, indent=1) + "\n")
+    print(f"{filename}: {len(els)} elements")
+
+
 text(40, 24, "CodeGuardian v1: a security gate and a Security agent", 28)
 text(40, 64, "Blocks only what a pull request adds. The model explains and ranks findings; it cannot add, move or hide one.", 15, "#404040")
 
@@ -95,7 +102,41 @@ arrow(530, 640, 598, 640)
 # Bottom: ruleset
 box(300, 760, 600, 70, EMERALD, "main ruleset: merge needs both checks green", "no bypass actors")
 
-doc = {"type": "excalidraw", "version": 2, "source": "codeguardian week 14",
-       "appState": {"gridSize": None, "viewBackgroundColor": "#ffffff"}, "elements": els, "files": {}}
-Path(__file__).with_name("architecture.excaliflow").write_text(json.dumps(doc, indent=1) + "\n")
-print(len(els), "elements")
+write_diagram("architecture.excaliflow", "codeguardian week 14")
+
+els.clear()
+random.seed(17)
+
+text(40, 25, "CodeGuardian Week 17", 32)
+text(42, 71, "How PR data, model replies, and approvals move through the review", 17)
+
+zone(30, 113, 1030, 134, BLUE, "Inputs to the trusted workflow")
+box(56, 157, 287, 69, BLUE, "Gate artifact", "Scanner decision, findings, and diff")
+box(386, 157, 287, 69, CARBON, "Workflow event", "PR number and expected head SHA")
+box(752, 157, 282, 69, EMERALD, "GitHub review", "Reviewer, action, and reviewed SHA")
+
+zone(30, 280, 670, 327, PURPLE, "")
+text(44, 582, "Review job   ·   model step uses an API key", 15, PURPLE)
+box(106, 323, 237, 82, PURPLE, "Security review", "Explains scanner findings")
+box(386, 323, 287, 82, EMERALD, "Standards lookup", "One public record in scope")
+box(56, 472, 287, 94, PURPLE, "Advisory review", "Quality, Test-Gap, Documentation\nOne request per role")
+box(386, 472, 287, 94, BLUE, "Validated report", "Scanner owns the gate decision\nAdvisory notes stay separate")
+arrow(196, 226, 196, 323)
+arrow(105, 226, 82, 472)
+arrow(386, 364, 343, 364)
+arrow(279, 405, 421, 471)
+arrow(343, 519, 386, 519)
+
+zone(726, 280, 334, 327, EMERALD, "")
+text(740, 582, "Guard job   ·   GitHub status token", 15, EMERALD)
+box(752, 323, 282, 102, EMERALD, "Config guard", "Checks the designated reviewer,\naction, and current head")
+box(752, 472, 282, 94, EMERALD, "Commit status", "Written to the checked SHA")
+arrow(893, 226, 893, 323)
+arrow(667, 226, 780, 323)
+arrow(893, 425, 893, 472)
+
+zone(30, 644, 670, 134, CYAN, "Post job   ·   GitHub pull-request token")
+box(386, 686, 287, 70, CYAN, "PR comment", "Recheck the head and escape text")
+arrow(530, 566, 530, 686)
+
+write_diagram("week-17.excaliflow", "codeguardian week 17")

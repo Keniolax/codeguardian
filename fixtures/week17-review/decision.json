@@ -1,0 +1,17 @@
+{
+  "result": "fail",
+  "blocking": [
+    {
+      "id": "example-container-user",
+      "scanner": "trivy",
+      "rule_id": "DS-0002",
+      "severity": "high",
+      "file": "Dockerfile",
+      "line": 1,
+      "title": "Container user",
+      "message": "This fixture represents an image with no non-root USER instruction.",
+      "url": ""
+    }
+  ],
+  "reported": []
+}

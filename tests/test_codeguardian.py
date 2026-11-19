@@ -255,6 +255,20 @@ def test_specialists_send_a_bounded_diff(tmp_path):
         assert "Describe the new setting." in user and "tail of the diff" not in user
 
 
+def test_advisory_notes_stay_out_of_later_reviews(tmp_path):
+    note = "Mention the retry delay in the help text."
+    provider = ReviewersProvider([{"note": note}, {"note": ""}, {"note": ""}] + [{"note": ""}] * 3)
+    directory = write_input(tmp_path, diff=REVIEW_DIFF)
+    first = supervisor.review(directory, provider, with_reviewers=True)
+    assert first["advisories"]["Quality"]["note"] == note
+
+    write_input(tmp_path, diff=REVIEW_DIFF.replace("setting", "startup message"))
+    second = supervisor.review(directory, provider, with_reviewers=True)
+    assert all(not item["note"] for item in second["advisories"].values())
+    for system, user, _ in provider.calls[3:]:
+        assert note not in system and note not in user
+
+
 @pytest.mark.parametrize("enabled, diff", [(False, REVIEW_DIFF), (True, "")])
 def test_specialists_skip_review_when_disabled_or_diff_is_empty(tmp_path, enabled, diff):
     provider = ReviewersProvider([])

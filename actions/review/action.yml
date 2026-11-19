@@ -13,6 +13,12 @@ inputs:
   model:
     description: Claude model ID
     default: claude-sonnet-5-5
+  with-standards:
+    description: Set to true to enable the scoped standards lookup
+    default: 'false'
+  with-reviewers:
+    description: Set to true to enable the three advisory reviewers
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -34,5 +40,10 @@ runs:
         CODEGUARDIAN_MODEL: ${{ inputs.model }}
         INPUT_DIR: ${{ inputs.input-dir }}
         OUTPUT: ${{ inputs.output }}
+        WITH_STANDARDS: ${{ inputs.with-standards }}
+        WITH_REVIEWERS: ${{ inputs.with-reviewers }}
       run: |
-        "$RUNNER_TEMP/cg-venv/bin/python" -m codeguardian review --input "$INPUT_DIR" --out "$OUTPUT"
+        args=(--input "$INPUT_DIR" --out "$OUTPUT")
+        if [[ "$WITH_STANDARDS" == true ]]; then args+=(--with-standards); fi
+        if [[ "$WITH_REVIEWERS" == true ]]; then args+=(--with-reviewers); fi
+        "$RUNNER_TEMP/cg-venv/bin/python" -m codeguardian review "${args[@]}"
