@@ -28,7 +28,7 @@ no job holds two credentials:
 | prepare | read access to artifacts | checks the PR number is an integer and the head SHA matches the event |
 | review | the Claude API key, no GitHub token | sends findings and the diff to the Security agent; no tools |
 | post | `pull-requests: write`, no API key | re-checks the report, escapes it, updates one comment |
-| guard | `statuses: write`, no API key | sets `codeguardian/config-guard`: fails if the PR edits `.github/` or `.gate/` without the `gate-change-approved` label |
+| guard | `statuses: write`, `pull-requests: read` | sets `codeguardian/config-guard` for protected configuration changes |
 
 The model returns JSON in a fixed schema (structured outputs), naming findings only by the
 gate's finding ID. `report.py` drops any entry with an unknown ID and takes scanner, rule,
@@ -75,6 +75,18 @@ which model answered each request. The notes appear under **Advisory review** wh
 render the report. If an advisory request fails, CodeGuardian saves the scanner report and
 any notes it already has. You can use both flags together.
 
+### Week 17 approval for gate changes
+
+Set `approver-id` on the guard action to the GitHub user ID of a maintainer. Set it in the
+default-branch workflow. For a protected change, the maintainer reviews the current PR
+commit and chooses **Approve** with the review body `Approve CodeGuardian config change`.
+Run the guard again when the review decision changes. Each run checks the latest decision
+from that maintainer and writes a status on the reviewed commit. The PR author cannot supply
+this approval.
+
+The `credential-scope` CI job uses an `actions: read` token to download a one-day fixture
+artifact. It also checks that GitHub denies the same token access to secret metadata.
+
 ## What was learned
 
 Measured on the seeded pull requests in
@@ -104,9 +116,6 @@ cost for the whole week was about $0.10 (about 22,000 input and 5,000 output tok
 - Escape everything that came from the pull request. A comment renderer that passes model
   text through could be made to load an attacker's image URL with data in it. The tests
   cover images, links, HTML and @-mentions.
-- An approval control only works if the author of a change cannot grant it. Changes to
-  `.gate/` need the `gate-change-approved` label, applied by a maintainer after review,
-  never by the automation that opened the change.
 
 ## Version 2 (in progress)
 

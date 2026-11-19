@@ -35,6 +35,7 @@ def main(argv=None):
     p.add_argument("--repo", required=True)
     p.add_argument("--head-sha", required=True)
     p.add_argument("--pr", type=int, required=True)
+    p.add_argument("--approver-id", type=int, help="GitHub user ID of the designated config reviewer")
 
     from .v2 import cli as v2_cli
 
@@ -64,8 +65,10 @@ def main(argv=None):
 
     from .github import GitHub, guard, post_report, verified_pull
 
-    if not SHA.match(a.head_sha):
+    if not SHA.fullmatch(a.head_sha):
         ap.error("--head-sha must be a 40-character hex SHA")
+    if a.cmd == "guard" and a.approver_id is not None and a.approver_id <= 0:
+        ap.error("--approver-id must be a positive GitHub user ID")
     gh = GitHub(a.repo)
 
     if a.cmd == "post":
@@ -79,7 +82,7 @@ def main(argv=None):
         return 0
 
     if a.cmd == "guard":
-        state, touched = guard(gh, a.pr, a.head_sha)
+        state, touched = guard(gh, a.pr, a.head_sha, approver_id=a.approver_id)
         print(f"config-guard {state}; protected files changed: {touched}")
         return 0
     return 1

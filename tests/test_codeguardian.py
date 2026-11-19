@@ -375,7 +375,8 @@ def gh_with(answers):
     return github.GitHub("o/r", token="t", api="https://api.github.com", opener=fake), fake
 
 
-OPEN_PR = {"state": "open", "head": {"sha": SHA}, "labels": []}
+OPEN_PR = {"state": "open", "head": {"sha": SHA}, "base": {"sha": "c" * 40},
+           "user": {"id": 10, "type": "User"}, "labels": [], "changed_files": 1}
 
 
 def test_post_creates_one_comment_with_marker():
@@ -422,15 +423,95 @@ def test_guard_fails_on_workflow_change():
 def test_guard_passes_ordinary_change():
     gh, fake = gh_with({("GET", "/repos/o/r/pulls/7/files"): files("routes/search.ts"),
                         ("GET", "/repos/o/r/pulls/7"): OPEN_PR})
-    assert github.guard(gh, 7, SHA)[0] == "success"
+    assert github.guard(gh, 7, SHA, approver_id=20)[0] == "success"
+    assert fake.sent[-1][2]["state"] == "success"
+    assert not any("/reviews?" in path for _, path, _, _ in fake.sent)
+
+
+def config_review(**changes):
+    return {"user": {"id": 20, "type": "User"}, "state": "APPROVED", "commit_id": SHA,
+            "body": "Approve CodeGuardian config change", **changes}
+
+
+def guard_github(reviews, pull=OPEN_PR, file_list=files(".gate/suppressions.json")):
+    return gh_with({("GET", "/repos/o/r/pulls/7/files"): file_list,
+                    ("GET", "/repos/o/r/pulls/7/reviews"): reviews,
+                    ("GET", "/repos/o/r/pulls/7"): pull})
+
+
+def test_guard_cli_accepts_current_approval_from_configured_reviewer(monkeypatch):
+    gh, fake = guard_github([config_review(), config_review(state="COMMENTED", body="Thanks")])
+    monkeypatch.setattr(github, "GitHub", lambda repo: gh)
+    assert cli_main(["guard", "--repo", "o/r", "--pr", "7", "--head-sha", SHA, "--approver-id", "20"]) == 0
+    assert fake.sent[-1][0:2] == ("POST", f"/repos/o/r/statuses/{SHA}")
     assert fake.sent[-1][2]["state"] == "success"
 
 
-def test_guard_accepts_approval_label():
-    pr = dict(OPEN_PR, labels=[{"name": github.APPROVAL_LABEL}])
-    gh, _ = gh_with({("GET", "/repos/o/r/pulls/7/files"): files(".gate/suppressions.json"),
-                     ("GET", "/repos/o/r/pulls/7"): pr})
-    assert github.guard(gh, 7, SHA)[0] == "success"
+@pytest.mark.parametrize("reviews", [
+    [],
+    [config_review(commit_id="b" * 40)],
+    [config_review(body="Approve documentation update")],
+    [config_review(user={"id": 21, "type": "User"})],
+    [config_review(user={"id": 20, "type": "Bot"})],
+    [config_review(state="COMMENTED")],
+    [config_review(), config_review(state="CHANGES_REQUESTED")],
+    [config_review(), config_review(state="DISMISSED")],
+], ids=["missing", "old-head", "other-action", "other-reviewer", "bot", "comment",
+        "changes-requested", "dismissed"])
+def test_guard_declines_unapproved_config_change(reviews):
+    gh, fake = guard_github(reviews, pull=dict(OPEN_PR, labels=[{"name": "gate-change-approved"}]))
+    assert github.guard(gh, 7, SHA, approver_id=20)[0] == "failure"
+    assert fake.sent[-1][2]["state"] == "failure"
+
+
+def test_guard_declines_approval_from_pr_author():
+    pull = dict(OPEN_PR, user={"id": 20, "type": "User"})
+    gh, _ = guard_github([config_review()], pull=pull)
+    assert github.guard(gh, 7, SHA, approver_id=20)[0] == "failure"
+
+
+def test_guard_declines_config_change_without_designated_reviewer():
+    pull = dict(OPEN_PR, labels=[{"name": "gate-change-approved"}])
+    gh, _ = guard_github([config_review()], pull=pull)
+    assert github.guard(gh, 7, SHA)[0] == "failure"
+
+
+def test_guard_uses_latest_decision_across_review_pages():
+    first = [config_review()] + [config_review(state="COMMENTED")] * 99
+    later = [config_review(state="CHANGES_REQUESTED")]
+    gh, fake = guard_github(lambda path: later if path.endswith("page=2") else first)
+    assert github.guard(gh, 7, SHA, approver_id=20)[0] == "failure"
+    assert any(path.endswith("reviews?per_page=100&page=2") for _, path, _, _ in fake.sent)
+
+
+def test_guard_counts_protected_source_of_a_rename():
+    gh, _ = guard_github([], file_list=[{"filename": "notes/scanners.yml", "status": "renamed",
+                                       "previous_filename": ".github/workflows/scanners.yml"}])
+    assert github.guard(gh, 7, SHA) == ("failure", [".github/workflows/scanners.yml"])
+
+
+def test_guard_fails_if_changed_file_list_is_incomplete():
+    gh, fake = guard_github([], pull=dict(OPEN_PR, changed_files=2), file_list=files("README.md"))
+    assert github.guard(gh, 7, SHA)[0] == "failure"
+    assert "file list" in fake.sent[-1][2]["description"]
+
+
+def test_guard_fails_if_renamed_file_has_no_source_path():
+    gh, fake = guard_github([], file_list=[{"filename": "notes/scanners.yml", "status": "renamed"}])
+    assert github.guard(gh, 7, SHA)[0] == "failure"
+    assert "file list" in fake.sent[-1][2]["description"]
+
+
+@pytest.mark.parametrize("update, message", [
+    ({"head": {"sha": "b" * 40}}, "head moved"),
+    ({"base": {"sha": "d" * 40}}, "base or file count changed"),
+])
+def test_guard_rechecks_pr_before_publishing_status(update, message):
+    pulls = iter([OPEN_PR, dict(OPEN_PR, **update)])
+    gh, fake = guard_github([config_review()], pull=lambda _: next(pulls))
+    with pytest.raises(RuntimeError, match=message):
+        github.guard(gh, 7, SHA, approver_id=20)
+    assert all(method == "GET" for method, _, _, _ in fake.sent)
 
 
 def test_cli_rejects_malformed_sha():

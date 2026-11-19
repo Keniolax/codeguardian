@@ -26,3 +26,59 @@ jobs:
       - run: python tests/mutants.py
         env:
           PYTHONPATH: src
+
+  scope-fixture:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - run: printf '%s\n' 'CodeGuardian credential scope fixture' > "$RUNNER_TEMP/scope-fixture.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: credential-scope-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/scope-fixture.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  credential-scope:
+    needs: scope-fixture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.scope-fixture.outputs.artifact-id }}
+          path: ${{ runner.temp }}/scope-proof
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+      - name: Verify the artifact and the secrets metadata boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cmp "$RUNNER_TEMP/scope-proof/scope-fixture.txt" <(printf '%s\n' 'CodeGuardian credential scope fixture')
+          printf '%s\n' 'Read the run artifact with the Actions read token.'
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          url = f"{os.environ['GITHUB_API_URL']}/repos/{repo}/actions/secrets"
+          req = Request(url, headers={'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                                      'Accept': 'application/vnd.github+json'})
+          try:
+              with urlopen(req, timeout=20) as response:
+                  raise SystemExit(f'Expected permission denial, got HTTP {response.status}')
+          except HTTPError as error:
+              if error.code != 403 or json.load(error).get('message') != 'Resource not accessible by integration':
+                  raise SystemExit(f'Unexpected GitHub response, HTTP {error.code}')
+          print('Secrets metadata request denied by GitHub permissions (HTTP 403).')
+          PY
