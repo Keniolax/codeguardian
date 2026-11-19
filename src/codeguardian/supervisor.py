@@ -34,7 +34,7 @@ def candidate_findings(decision):
     return ordered[:MAX_FINDINGS]
 
 
-def review(directory, provider):
+def review(directory, provider, *, with_standards=False):
     decision, pr, patch = load_input(directory)
     findings = candidate_findings(decision)
     started = time.monotonic()
@@ -42,7 +42,8 @@ def review(directory, provider):
         return build_report(pr=pr, gate_result=decision.get("result", "unknown"), items=[], dropped=[],
                             summary="The scanners found nothing new in this change.",
                             model=None, served_by=None, usage={"seconds": 0})
-    raw, meta = SecurityAgent(provider).run(findings, patch, AGENT_OUTPUT_SCHEMA)
+    raw, meta = SecurityAgent(provider).run(findings, patch, AGENT_OUTPUT_SCHEMA,
+                                            with_standards=with_standards)
     items, dropped = validate_agent_output(raw, findings)
     usage = dict(meta.get("usage", {}), seconds=round(time.monotonic() - started, 1))
     return build_report(pr=pr, gate_result=decision.get("result", "unknown"), items=items, dropped=dropped,

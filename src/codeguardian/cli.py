@@ -19,6 +19,7 @@ def main(argv=None):
     p.add_argument("--input", required=True, help="directory with decision.json, pr.json, change.diff")
     p.add_argument("--out", required=True)
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama"])
+    p.add_argument("--with-standards", action="store_true", help="enable one scoped review standards lookup")
 
     p = sub.add_parser("render", help="print the comment a report would produce")
     p.add_argument("--report", required=True)
@@ -47,7 +48,7 @@ def main(argv=None):
         from .providers import get_provider
         from .supervisor import review
 
-        report = review(a.input, get_provider(a.provider))
+        report = review(a.input, get_provider(a.provider), with_standards=a.with_standards)
         Path(a.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"{len(report['items'])} findings, {report['dropped_model_entries']} model entries dropped,"
               f" served by {report['served_by']}")

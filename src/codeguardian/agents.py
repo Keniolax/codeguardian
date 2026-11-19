@@ -1,12 +1,14 @@
 """Agents. v1 has one: the Security agent, which explains and ranks scanner findings.
 
-The agent gets no tools. It reads data and returns JSON. Everything in a pull request
-(code, comments, the description, scanner messages quoting that code) is untrusted, so the
-prompt marks it as data and the code around the model does not rely on the model obeying.
+The agent reads data and returns JSON. It can request a read-only standards lookup when
+enabled. Pull request code, comments, descriptions and scanner messages quoting the code
+are untrusted. The prompt marks them as data and the application enforces tool scope.
 """
 
 import json
 import re
+
+from .standards import request_standard
 
 SECURITY_SYSTEM = """You are the Security agent in CodeGuardian, a pull-request reviewer.
 
@@ -92,5 +94,17 @@ class SecurityAgent:
     def __init__(self, provider):
         self.provider = provider
 
-    def run(self, findings, patch, schema):
-        return self.provider.complete_json(SECURITY_SYSTEM, build_security_input(findings, patch), schema)
+    def run(self, findings, patch, schema, *, with_standards=False):
+        system = SECURITY_SYSTEM
+        lookup_usage = {}
+        if with_standards:
+            standard, lookup_usage = request_standard(self.provider, findings)
+            if standard is not None:
+                system += "\nTrusted standards guidance:\n" + json.dumps(standard)
+        raw, meta = self.provider.complete_json(system, build_security_input(findings, patch), schema)
+        if lookup_usage:
+            usage = dict(meta.get("usage", {}))
+            for key, count in lookup_usage.items():
+                usage[key] = usage.get(key, 0) + count
+            meta = dict(meta, usage=usage)
+        return raw, meta

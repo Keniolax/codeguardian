@@ -59,6 +59,15 @@ PYTHONPATH=src .venv/bin/python -m codeguardian render --report report.json
 
 Dependencies are hash-locked, and every release in the lock files is at least 14 days old.
 
+### Week 17 standards lookup
+
+Add `--with-standards` to the local `review` command to let the reviewer request one record
+from its bundled catalog. The model sees the catalog IDs that match scanner rules in the
+current review before it sees the PR diff. Code checks the tool name, arguments, and ID
+before reading the record. It passes the approved record to the model separately from the
+diff. A catalog match adds one model request. The pinned GitHub Action uses the default
+review path.
+
 ## What was learned
 
 Measured on the seeded pull requests in
