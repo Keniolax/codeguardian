@@ -6,6 +6,8 @@ artifact, never from the model, so the model can rank and explain findings but c
 invent one, move one, or hide one.
 """
 
+from .agents import ADVISORY_ROLES, ADVISORY_STATUSES, MAX_ADVISORY_NOTE
+
 RISKS = ("critical", "high", "medium", "low", "info")
 
 # JSON schema sent to the model as a structured-output format.
@@ -120,4 +122,16 @@ def check_report(report):
                 raise ReportError(f"item field {key} must be a string")
         if not isinstance(item.get("line"), int):
             raise ReportError("item line must be an integer")
+    advisories = report.get("advisories", {})
+    if not isinstance(advisories, dict):
+        raise ReportError("advisories must be an object")
+    for role, result in advisories.items():
+        if role not in ADVISORY_ROLES or not isinstance(result, dict) or result.keys() != {"status", "note", "served_by"}:
+            raise ReportError("advisories must map known roles to results")
+        status, note, model = result["status"], result["note"], result["served_by"]
+        if not (isinstance(status, str) and status in ADVISORY_STATUSES
+                and isinstance(note, str) and len(note) <= MAX_ADVISORY_NOTE
+                and (status == "complete" or not note)
+                and (model is None or isinstance(model, str))):
+            raise ReportError("advisories contain an invalid result")
     return report

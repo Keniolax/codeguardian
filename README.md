@@ -59,7 +59,7 @@ PYTHONPATH=src .venv/bin/python -m codeguardian render --report report.json
 
 Dependencies are hash-locked, and every release in the lock files is at least 14 days old.
 
-### Week 17 standards lookup
+### Week 17 review options
 
 Add `--with-standards` to the local `review` command to let the reviewer request one record
 from its bundled catalog. The model sees the catalog IDs that match scanner rules in the
@@ -67,6 +67,13 @@ current review before it sees the PR diff. Code checks the tool name, arguments,
 before reading the record. It passes the approved record to the model separately from the
 diff. A catalog match adds one model request. The pinned GitHub Action uses the default
 review path.
+
+Add `--with-reviewers` to get notes on correctness, missing tests, and documentation.
+CodeGuardian can make up to three model requests, even when the scanners find nothing.
+Each role reads the first 60,000 characters of the diff on its own. The JSON report records
+which model answered each request. The notes appear under **Advisory review** when you
+render the report. If an advisory request fails, CodeGuardian saves the scanner report and
+any notes it already has. You can use both flags together.
 
 ## What was learned
 
