@@ -43,7 +43,8 @@ names the model that answered. `OllamaProvider` runs the same agent on a local m
 
 ## How to run it
 
-The training target uses the Week 14 action pins. Use the local fixture to try Week 17.
+The training target runs the Week 17 review, guard, and post actions. Use the local fixture
+to try the reviewer. [Training target rollout](https://github.com/Keniolax/codeguardian-target/pull/18) ·
 [Week 17 run instructions](docs/week-17-report.md#run-the-checks).
 
 The actions in `actions/` are used by the target repository's workflow, pinned by commit

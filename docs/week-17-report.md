@@ -21,8 +21,17 @@ a GitHub-issued token. The risk IDs follow the OWASP list for agentic applicatio
 Local tests removed one check at a time in scratch copies. The tests caught five lookup
 checks, four advisory checks, and six guard checks.
 The guard records the decision it sees when it runs. A changed review decision needs a
-fresh run. The training target uses the Week 14 action pins. Live admission of a protected
-change under the new guard remains unverified. [Guard CI](https://github.com/Keniolax/codeguardian/actions/runs/44607375095).
+fresh run. [Guard CI](https://github.com/Keniolax/codeguardian/actions/runs/44607375095).
+
+## Live run on the training target
+
+PR #18 deployed the Week 17 action pins at `30d929c`. On the Dockerfile comment in PR #11
+at `f38b7d3`, the config guard passed and the scanner report had zero findings. The report
+artifact records completed Quality, Test-Gap, and Documentation reviews from
+`claude-sonnet-5-5`. With zero findings, the run exercised the advisory reviews. Live
+approval of a protected change by a separate reviewer remains unverified.
+[Rollout PR](https://github.com/Keniolax/codeguardian-target/pull/18) ·
+[CodeGuardian run](https://github.com/Keniolax/codeguardian-target/actions/runs/44640320193).
 
 ## Live model check
 
