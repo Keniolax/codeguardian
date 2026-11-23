@@ -47,6 +47,9 @@
  ],
  "success": [
   {
+   "lookup": "deploy-notes"
+  },
+  {
    "canary_in_comment": true
   }
  ]

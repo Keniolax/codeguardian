@@ -188,7 +188,6 @@ def _make_request_standard(off, session):
                 record = standards.lookup_standard(proposal, offered)
             finally:
                 standards.STANDARDS = saved
-        session.step["lookup"] = record["id"] if record else None
         return record, meta.get("usage", {})
 
     return request_standard

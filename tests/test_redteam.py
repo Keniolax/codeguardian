@@ -211,3 +211,15 @@ def test_artifact_store_reads_records_and_keeps_the_token_off_the_blob_host():
     auth = dict(_Handler.seen)
     assert auth["/zip"] == "Bearer tok"
     assert auth["/blob"] is None
+
+
+def test_the_read_is_recorded_in_hardened_mode_too():
+    assert run("A3", frozenset())["steps"][0]["lookup"] == "trivy:DS-0002"
+    assert run("A3", modes.ALL)["checks_hit"] == [0, 1]
+
+
+def test_evidence_keeps_hashes_and_sizes_but_not_prompt_text():
+    record = {"runs": [run("A1", frozenset())]}
+    call = replay.for_evidence(record)["runs"][0]["steps"][0]["calls"][0]
+    assert "system" not in call and "user" not in call
+    assert call["system_chars"] > 0 and len(call["system_sha256"]) == 64

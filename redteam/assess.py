@@ -1,6 +1,6 @@
 """Summarise replay evidence as a table and check it against the report's claims.
 
-    python -m redteam.assess evidence/redteam/ci [--claims redteam/claims.json --model qwen2.5:1.5b --strict]
+    python -m redteam.assess evidence/redteam/ci [--claims redteam/claims.json --set redteam --model qwen2.5:1.5b --strict]
 
 A claim says whether a payload should hit or miss in a mode. A payload counts as a hit
 when any of its runs hit: the exact replay or a sampled run. Control payloads carry no
@@ -58,6 +58,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("evidence")
     ap.add_argument("--claims", default="")
+    ap.add_argument("--set", default="redteam", help="which set of claims in the file: redteam or ablation")
     ap.add_argument("--model", default="qwen2.5:1.5b")
     ap.add_argument("--strict", action="store_true", help="exit 1 when a claim or control breaks")
     args = ap.parse_args(argv)
@@ -66,7 +67,7 @@ def main(argv=None):
         print("no evidence found", file=sys.stderr)
         return 1
     print(table(records))
-    claims = json.loads(Path(args.claims).read_text(encoding="utf-8")) if args.claims else {}
+    claims = json.loads(Path(args.claims).read_text(encoding="utf-8")).get(args.set, {}) if args.claims else {}
     problems = broken_claims(records, claims, args.model)
     for p in problems:
         print(f"- BROKEN: {p}")

@@ -9,6 +9,7 @@ times at temperature 0.8 with seeds 1 to N (the sampled runs).
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -44,6 +45,28 @@ def write_step(directory, step):
     (d / "change.diff").write_text(step["diff"], encoding="utf-8")
 
 
+GUIDANCE = re.compile(r"Trusted standards guidance:\n(\{.*?\})(?:\n|$)", re.S)
+
+
+def record_read(calls):
+    """The ID of the record the lookup put into the Security request, in any mode."""
+    for call in calls:
+        if "findings" in call["schema_keys"]:
+            found = GUIDANCE.search(call["system"])
+            return json.loads(found.group(1))["id"] if found else None
+    return None
+
+
+def for_evidence(record):
+    """Keep each request's hash and size, not its text: payload and code rebuild the text."""
+    for run in record["runs"]:
+        for step in run["steps"]:
+            for call in step["calls"]:
+                for key in ("system", "user"):
+                    call[f"{key}_chars"] = len(call.pop(key))
+    return record
+
+
 def security_reply(trace):
     replies = [c.get("reply") for c in trace.calls if "findings" in c["schema_keys"]]
     return replies[-1] if replies else None
@@ -71,14 +94,15 @@ def run_once(payload, off, model, store):
             continue
         modes.after_review(off, session, report, security_reply(trace))
         steps.append({"report": report, "comment": render.render(report), "patched": patched,
-                      "lookup": session.step.get("lookup"), "memory": list(session.memory),
+                      "lookup": record_read(trace.calls[first_call:]), "memory": list(session.memory),
                       "calls": trace.calls[first_call:]})
     judged = payload.get("judge_step", len(payload["steps"]) - 1)
     last = steps[judged]
     if "report" not in last:
         return {"hit": False, "checks_hit": [], "error": last["error"], "steps": steps}
     result = checks.outcome(payload["success"], report=last["report"], comment=last["comment"],
-                            scanner=payload["steps"][judged]["decision"], canary=store.canary)
+                            scanner=payload["steps"][judged]["decision"], canary=store.canary,
+                            lookup=last["lookup"])
     return {**result, "steps": steps}
 
 
@@ -131,7 +155,7 @@ def main(argv=None):
         out = Path(args.out) / modes.mode_name(off).replace(":", "-").replace(",", "+")
         out.mkdir(parents=True, exist_ok=True)
         for pid, record in results.items():
-            (out / f"{pid}.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
+            (out / f"{pid}.json").write_text(json.dumps(for_evidence(record), indent=1) + "\n", encoding="utf-8")
             print(f"{pid:4} {record['mode']:60} exact={'hit' if record['exact_hit'] else 'miss'}"
                   f" sampled={record['sampled_hits']}/{record['sampled_runs']}")
     return 0
