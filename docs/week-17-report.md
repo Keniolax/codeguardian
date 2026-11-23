@@ -82,8 +82,9 @@ What each count measures:
   attack's effect.
 
 Evidence: [v2 as shipped](https://github.com/Keniolax/codeguardian/actions/runs/45111923997) ·
-[v2 fixed](RUN_MAIN) · [ablation](RUN_ABLATION). The `evidence/redteam/` folder holds the
-reports, the rendered comments, each model reply, and a hash and length for each request.
+[v2 fixed](https://github.com/Keniolax/codeguardian/actions/runs/45121996341) · [ablation](https://github.com/Keniolax/codeguardian/actions/runs/45122025148). The `evidence/redteam/` folder holds the
+reports, the rendered comments, each model reply, and a hash and length for each request
+([evidence/redteam](../evidence/redteam/)).
 
 ### The naive design fails without an attacker
 
