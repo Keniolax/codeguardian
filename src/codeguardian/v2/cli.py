@@ -70,6 +70,12 @@ def add_subcommands(sub):
     p.add_argument("--write-events", help="also save the generated NDJSON here")
 
 
+def refuse_extra(a, extra):
+    """Called before the top-level parser refuses an option no parser knows, which exits 2.
+    A command whose exit codes are answers may exit here with a code of its own."""
+    return None
+
+
 def _setup(a):
     from .pipeline import Pipeline
     from .rules import load_rules

@@ -10,6 +10,9 @@ if any mutant survives or breaks, if the tree is not clean afterwards, or if a t
 name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy or order files,
 has no mutant. In the NetworkPolicy and order files every parametrized case must also have a
 mutant of its own.
+
+The reviewer's week 17 mutants live in tests/mutants_week17.py, which is frozen with the
+reviewer; this file runs them after its own.
 """
 
 import ast
@@ -18,6 +21,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+from mutants_week17 import MUTANTS as REVIEWER_MUTANTS
 
 ROOT = Path(__file__).resolve().parents[1]
 V2 = "src/codeguardian/v2/"
@@ -754,41 +759,11 @@ MUTANTS = [
     ("findings --history ignored", V2 + "cli.py", "        if a.history:", "        if False:", [T(HIST_OUT, ORDER)]),
     ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 3 if refused else 0", "    return 0",
      [T(INGEST, ORDER)]),
-    # Week 17: the reviewer's tool scope and the two fixes found by the attack harness.
-    ("standards lookup accepts an ID outside the review", "src/codeguardian/standards.py",
-     "    if not isinstance(standard_id, str) or standard_id not in allowed_ids:",
-     "    if not isinstance(standard_id, str):",
-     ["tests/test_redteam.py::test_scope_check_alone_stops_the_exfiltration_when_the_tool_sees_the_pr"]),
-    ("blocking finding takes the model's false-positive flag", "src/codeguardian/report.py",
-     "                if likely_fp:\n                    likely_fp, locked = False, True",
-     "                if False:\n                    likely_fp, locked = False, True",
-     ["tests/test_codeguardian.py::test_model_cannot_lower_or_clear_a_blocking_finding",
-      "tests/test_redteam.py::test_lock_keeps_the_scanner_verdict_and_says_so_in_the_comment"]),
-    ("blocking finding takes the model's lower risk", "src/codeguardian/report.py",
-     "                    risk, locked = floor, True",
-     "                    locked = True",
-     ["tests/test_codeguardian.py::test_model_cannot_lower_or_clear_a_blocking_finding",
-      "tests/test_redteam.py::test_lock_keeps_the_scanner_verdict_and_says_so_in_the_comment"]),
-    ("lock applied to reported findings too", "src/codeguardian/report.py",
-     '            if by_id[fid].get("blocking"):',
-     "            if True:",
-     ["tests/test_codeguardian.py::test_model_may_still_flag_a_reported_finding_as_a_likely_false_positive"]),
-    ("post accepts a cleared blocking finding", "src/codeguardian/report.py",
-     '        if item.get("blocking") and item.get("likely_false_positive"):',
-     "        if False:",
-     ["tests/test_codeguardian.py::test_post_refuses_a_report_that_clears_a_blocking_finding[change0]"]),
-    ("post accepts a blocking finding ranked below the scanner", "src/codeguardian/report.py",
-     '        if item.get("blocking") and floor in RISKS and item["risk"] in RISKS \\',
-     '        if False and floor in RISKS and item["risk"] in RISKS \\',
-     ["tests/test_codeguardian.py::test_post_refuses_a_report_that_clears_a_blocking_finding[change1]"]),
-    ("protected config PR still sent to the model", "src/codeguardian/supervisor.py",
-     "    if protected:", "    if False:",
-     ["tests/test_codeguardian.py::test_protected_config_change_gets_no_model_request[edit]",
-      "tests/test_redteam.py::test_protected_config_pr_gets_no_model_request_and_says_why"]),
-    ("rename counts only the new path", "src/codeguardian/agents.py",
-     "            paths.update(m.groups())", "            paths.add(m.group(2))",
-     ["tests/test_codeguardian.py::test_protected_config_change_gets_no_model_request[rename-out]"]),
+    ("unknown option of a command ignored", "src/codeguardian/cli.py",
+     '        ap.error(f"unrecognized arguments: {\' \'.join(extra)}")', "        pass",
+     [T("test_unknown_option_of_a_command_is_refused_with_exit_2", CORE)]),
 ]
+MUTANTS += REVIEWER_MUTANTS
 
 
 def pytest(node):

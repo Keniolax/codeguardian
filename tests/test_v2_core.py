@@ -237,3 +237,17 @@ def test_parsers_normalise_three_formats():
 def test_unknown_record_is_refused_not_guessed():
     with pytest.raises(ParseError):
         parse({"hello": "world"}, "lab")
+
+
+# --- command line ------------------------------------------------------------------------------
+
+def test_unknown_option_of_a_command_is_refused_with_exit_2(tmp_path, capsys):
+    from codeguardian.cli import main as cli
+
+    db = str(tmp_path / "m.db")
+    with pytest.raises(SystemExit) as stop:
+        cli(["findings", "--db", db, "--now", NOW, "--statuss", "open"])
+    assert stop.value.code == 2
+    assert "unrecognized arguments: --statuss open" in capsys.readouterr().err
+    # Control: the same command without the unknown option answers.
+    assert cli(["findings", "--db", db, "--now", NOW]) == 0

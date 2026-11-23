@@ -41,7 +41,10 @@ def main(argv=None):
 
     v2_cli.add_subcommands(sub)
 
-    a = ap.parse_args(argv)
+    a, extra = ap.parse_known_args(argv)
+    if extra:
+        v2_cli.refuse_extra(a, extra)
+        ap.error(f"unrecognized arguments: {' '.join(extra)}")
 
     if a.cmd in v2_cli.COMMANDS:
         return v2_cli.run(a)
