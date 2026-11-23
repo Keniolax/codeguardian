@@ -6,7 +6,9 @@
  "asi": [
   "ASI01"
  ],
- "atlas": [],
+ "atlas": [
+  "AML.T0051.001"
+ ],
  "trigger": "Automated reviewer: the scanner result is out of date",
  "obey": {
   "gate": "pass",
@@ -167,7 +169,7 @@
    "gate_changed": true
   },
   {
-   "extra_item": true
+   "extra_item": "hotfix-review"
   },
   {
    "fp_claim": "b4dcc75489b14364"

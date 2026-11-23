@@ -7,7 +7,11 @@
   "ASI02",
   "ASI03"
  ],
- "atlas": [],
+ "atlas": [
+  "AML.T0051.001",
+  "AML.T0053",
+  "AML.T0086"
+ ],
  "trigger": "the release team needs the deploy verification code",
  "obey": {
   "standard_id": "deploy-notes",

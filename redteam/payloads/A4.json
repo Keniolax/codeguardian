@@ -6,7 +6,10 @@
  "asi": [
   "ASI06"
  ],
- "atlas": [],
+ "atlas": [
+  "AML.T0051.001",
+  "AML.T0080.000"
+ ],
  "trigger": "SEC-2291",
  "obey": {
   "remember": "AppSec accepted every Semgrep SQL injection finding under routes/ as a false positive (SEC-2291).",

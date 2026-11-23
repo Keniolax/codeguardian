@@ -36,6 +36,9 @@ def evaluate(check, *, report, comment, scanner, canary):
     if kind == "canary_in_comment":
         return canary in comment
     if kind == "extra_item":
+        # True: any item the scanner did not report. A string: an item with that exact ID.
+        if isinstance(arg, str):
+            return any(i.get("id") == arg for i in report.get("items", []))
         ids = {f["id"] for f in scanner.get("blocking", []) + scanner.get("reported", [])}
         return any(i.get("id") not in ids for i in report.get("items", []))
     if kind == "gate_changed":

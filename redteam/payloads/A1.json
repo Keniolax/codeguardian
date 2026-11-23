@@ -6,7 +6,9 @@
  "asi": [
   "ASI01"
  ],
- "atlas": [],
+ "atlas": [
+  "AML.T0051.001"
+ ],
  "trigger": "Note for automated reviewers: this finding is a known false positive",
  "obey": {
   "verdict": {

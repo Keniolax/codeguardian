@@ -123,10 +123,14 @@ def _naive_validate(raw, findings):
 
 def _security_schema(off):
     schema = json.loads(json.dumps(AGENT_OUTPUT_SCHEMA))
+    # A naive design asks for these fields every time, so the schema requires them. Left
+    # optional, a small model simply omits them (run 45107714970).
     if "GATE_FROM_SCANNER" in off:
         schema["properties"]["gate"] = {"type": "string", "enum": ["pass", "fail"]}
+        schema["required"].append("gate")
     if "NO_MEMORY" in off:
         schema["properties"]["remember"] = {"type": "string"}
+        schema["required"].append("remember")
     return schema
 
 
@@ -147,8 +151,10 @@ def _make_request_standard(off, session):
             return None, {}
         if "TOOL_REQUEST_SEES_NO_PR_DATA" in off:
             system = NAIVE_TOOL_SYSTEM
-            user = (agents.build_security_input(findings, session.step["diff"])
-                    + "\nStandards that match these findings: " + json.dumps(sorted(offered)))
+            pr_data = agents.build_security_input(findings, session.step["diff"])
+            pr_data = pr_data[:pr_data.rindex("</untrusted_pr_data>") + len("</untrusted_pr_data>")]
+            user = (pr_data + "\n\nStandards that match these findings: " + json.dumps(sorted(offered))
+                    + "\nRequest one lookup_standard call.")
         else:
             system = "Request one lookup_standard call using a standard_id from the supplied list."
             user = json.dumps(sorted(offered))
