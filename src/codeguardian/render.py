@@ -68,6 +68,9 @@ def render(report):
                 lines.append(f"- Fix: {safe(i['fix'])}")
                 if i.get("likely_false_positive"):
                     lines.append("- The reviewer thinks this may be a false positive. A person should confirm.")
+                if i.get("verdict_locked"):
+                    lines.append("- The model tried to lower or clear this blocking finding. The scanner's"
+                                 " result stands; only a reviewed entry in .gate/suppressions.json clears it.")
             else:
                 lines.append(f"- Scanner says: {safe(i.get('message', ''))}")
             lines.append("")

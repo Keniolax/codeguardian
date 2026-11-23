@@ -70,6 +70,16 @@ def split_diff(patch):
     return files
 
 
+def changed_paths(patch):
+    """Every path a diff names, old and new, so a rename counts on both sides."""
+    paths = set()
+    for line in patch.splitlines():
+        m = re.match(r"diff --git a/(.+?) b/(.+)$", line.strip())
+        if m:
+            paths.update(m.groups())
+    return sorted(paths)
+
+
 def build_security_input(findings, patch):
     """Findings, the list of changed files, and the diff, size-capped.
 

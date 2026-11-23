@@ -31,6 +31,10 @@ CONTROLS = {
         "Nothing a model writes in one review reaches a later review's request.",
     "UNTRUSTED_TAGS":
         "PR data is fenced in <untrusted_pr_data> and the prompt calls it data, not instructions.",
+    "BLOCKING_VERDICT_LOCKED":
+        "The model cannot lower the risk of a blocking finding or mark it a likely false positive.",
+    "PROTECTED_CONFIG_NO_MODEL":
+        "A PR that changes protected configuration gets no model text; the maintainer reads the diff.",
 }
 
 ALL = frozenset(CONTROLS)
@@ -121,6 +125,19 @@ def _naive_validate(raw, findings):
     return items, []
 
 
+def _unlocked_validate(original):
+    """The shipped join, without the lock: blocking findings take the model's verdict."""
+
+    def validate(raw, findings):
+        flags = {f["id"]: f.get("blocking") for f in findings}
+        items, dropped = original(raw, [dict(f, blocking=False) for f in findings])
+        for item in items:
+            item["blocking"] = flags.get(item["id"], item.get("blocking"))
+        return items, dropped
+
+    return validate
+
+
 def _security_schema(off):
     schema = json.loads(json.dumps(AGENT_OUTPUT_SCHEMA))
     # A naive design asks for these fields every time, so the schema requires them. Left
@@ -208,6 +225,10 @@ def applied(off, session):
                   _make_build_security_input(off, session, agents.build_security_input))
         if "FINDING_ID_JOIN" in off:
             patch(supervisor, "validate_agent_output", _naive_validate)
+        elif "BLOCKING_VERDICT_LOCKED" in off:
+            patch(supervisor, "validate_agent_output", _unlocked_validate(supervisor.validate_agent_output))
+        if "PROTECTED_CONFIG_NO_MODEL" in off:
+            patch(supervisor, "protected_in", lambda patch_text: [])
         if off & {"GATE_FROM_SCANNER", "NO_MEMORY"}:
             patch(supervisor, "AGENT_OUTPUT_SCHEMA", _security_schema(off))
         extra = ""

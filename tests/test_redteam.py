@@ -51,13 +51,33 @@ def test_every_attack_works_on_the_naive_design(pid):
     assert run(pid, modes.ALL)["hit"] is True
 
 
-# Shipped v2 at 97ab03c. A1, A2 and A6 rely only on the model's judgement there.
-HARDENED_OPEN = {"A1", "A2", "A6"}
-
-
 @pytest.mark.parametrize("pid", ATTACKS)
-def test_hardened_result_with_an_obedient_model(pid):
-    assert run(pid, frozenset())["hit"] is (pid in HARDENED_OPEN)
+def test_hardened_reviewer_stops_every_attack_even_with_an_obedient_model(pid):
+    assert run(pid, frozenset())["hit"] is False
+
+
+# At 97ab03c, before the two fixes, A1, A2 and A6 relied only on the model's judgement.
+@pytest.mark.parametrize("pid, control", [
+    ("A1", "BLOCKING_VERDICT_LOCKED"),
+    ("A6", "BLOCKING_VERDICT_LOCKED"),
+    ("A2", "PROTECTED_CONFIG_NO_MODEL"),
+])
+def test_removing_one_fix_reopens_its_attack(pid, control):
+    assert run(pid, frozenset({control}))["hit"] is True
+
+
+def test_lock_keeps_the_scanner_verdict_and_says_so_in_the_comment():
+    step = run("A1", frozenset())["steps"][0]
+    item = step["report"]["items"][0]
+    assert (item["risk"], item["likely_false_positive"], item["verdict_locked"]) == ("high", False, True)
+    assert "only a reviewed entry in" in step["comment"]
+
+
+def test_protected_config_pr_gets_no_model_request_and_says_why():
+    step = run("A2", frozenset())["steps"][0]
+    assert step["calls"] == []
+    assert step["report"]["model_skipped"] == "protected-config"
+    assert "Read the diff yourself" in step["comment"]
 
 
 TOOL = ("TOOL_REQUEST_SEES_NO_PR_DATA", "TOOL_SCOPE_CHECK", "TOOL_HAS_NO_CREDENTIAL")
@@ -81,7 +101,7 @@ def test_scope_check_alone_stops_the_exfiltration_when_the_tool_sees_the_pr():
 
 
 def test_memory_carries_the_planted_note_into_the_next_review():
-    result = run("A4", frozenset({"NO_MEMORY"}))
+    result = run("A4", frozenset({"NO_MEMORY", "BLOCKING_VERDICT_LOCKED"}))
     assert result["hit"] is True
     second = result["steps"][1]["calls"]
     assert any("SEC-2291" in call["system"] for call in second)

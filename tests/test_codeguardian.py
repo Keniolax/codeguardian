@@ -543,3 +543,47 @@ def test_url_finding_still_gets_the_diff_that_caused_it():
     text = build_security_input([zap], diff)
     assert "-  app.use(helmet.frameguard())" in text
     assert "<changed_files>\nserver.ts\n</changed_files>" in text
+
+
+# --- week 17 fixes: the model cannot clear a blocking finding, and gets no say on config PRs ----
+
+def test_model_cannot_lower_or_clear_a_blocking_finding():
+    finding = dict(gate_finding("real"), blocking=True)
+    items, _ = report.validate_agent_output(
+        {"summary": "", "findings": [entry("real", risk="info", likely_false_positive=True)]}, [finding])
+    assert (items[0]["risk"], items[0]["likely_false_positive"], items[0]["verdict_locked"]) == ("high", False, True)
+
+
+def test_model_may_still_flag_a_reported_finding_as_a_likely_false_positive():
+    finding = dict(gate_finding("real", sev="medium"), blocking=False)
+    items, _ = report.validate_agent_output(
+        {"summary": "", "findings": [entry("real", risk="low", likely_false_positive=True)]}, [finding])
+    assert (items[0]["risk"], items[0]["likely_false_positive"], items[0]["verdict_locked"]) == ("low", True, False)
+
+
+@pytest.mark.parametrize("change", [{"likely_false_positive": True}, {"risk": "low"}])
+def test_post_refuses_a_report_that_clears_a_blocking_finding(change):
+    items, _ = report.validate_agent_output({"summary": "", "findings": [entry("x")]},
+                                            [dict(gate_finding("x"), blocking=True)])
+    items[0].update(change)
+    tampered = report.build_report(pr={"number": 7, "head_sha": SHA}, gate_result="fail", items=items,
+                                   dropped=[], summary="s", model="m", served_by="m", usage={})
+    with pytest.raises(report.ReportError):
+        report.check_report(tampered)
+
+
+RENAME_OUT_OF_GATE = ("diff --git a/.gate/suppressions.json b/docs/suppressions.json\n"
+                      "similarity index 100%\nrename from .gate/suppressions.json\nrename to docs/suppressions.json\n")
+
+
+@pytest.mark.parametrize("diff", [
+    "diff --git a/.github/workflows/gate.yml b/.github/workflows/gate.yml\n--- a/x\n+++ b/x\n@@ -1 +1,2 @@\n a\n+b\n",
+    RENAME_OUT_OF_GATE,
+], ids=["edit", "rename-out"])
+def test_protected_config_change_gets_no_model_request(tmp_path, diff):
+    p = FakeProvider({"summary": "safe to merge", "findings": []})
+    r = supervisor.review(write_input(tmp_path, blocking=[gate_finding("real")], diff=diff), p,
+                          with_standards=True, with_reviewers=True)
+    assert p.calls == []
+    assert r["model_skipped"] == "protected-config" and "advisories" not in r
+    assert r["gate_result"] == "fail" and r["items"][0]["explained"] is False

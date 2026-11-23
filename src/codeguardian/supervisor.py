@@ -8,8 +8,15 @@ import json
 import time
 from pathlib import Path
 
-from .agents import MAX_FINDINGS, SecurityAgent, review_advisories
+from .agents import MAX_FINDINGS, SecurityAgent, changed_paths, review_advisories
+from .github import protected_changes
 from .report import AGENT_OUTPUT_SCHEMA, build_report, validate_agent_output
+
+PROTECTED_SUMMARY = (
+    "This pull request changes protected CodeGuardian or gate configuration. CodeGuardian does not"
+    " ask a model about such a change, because text in the pull request can steer what a model says."
+    " Read the diff yourself. The config guard needs the designated maintainer's approval of this commit."
+)
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
@@ -33,10 +40,22 @@ def candidate_findings(decision):
     return ordered[:MAX_FINDINGS]
 
 
+def protected_in(patch):
+    return protected_changes(changed_paths(patch))
+
+
 def review(directory, provider, *, with_standards=False, with_reviewers=False):
     decision, pr, patch = load_input(directory)
     findings = candidate_findings(decision)
     started = time.monotonic()
+    protected = protected_in(patch)
+    if protected:
+        # The human approval is the control for these files. No model text sits next to it.
+        items, dropped = validate_agent_output({"summary": "", "findings": []}, findings)
+        report = build_report(pr=pr, gate_result=decision.get("result", "unknown"), items=items, dropped=dropped,
+                              summary=PROTECTED_SUMMARY, model=None, served_by=None, usage={"seconds": 0})
+        report["model_skipped"] = "protected-config"
+        return report
     if findings:
         raw, meta = SecurityAgent(provider).run(findings, patch, AGENT_OUTPUT_SCHEMA,
                                                 with_standards=with_standards)
