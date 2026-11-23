@@ -33,6 +33,26 @@ ENTITY_TYPES = {
 EDGE_TYPES = ("contains", "runs_as", "assumes", "has_permission", "exposes", "reachable_from",
               "uses_model", "can_call", "holds", "reads", "deploys_to", "protects")
 
+# edge type -> (what it means, (source type, target type) as the collectors write it, or
+# None when no collector writes it yet). ask sends this to the model, so a query can name
+# the edge that answers the question, not one whose name only sounds right.
+EDGE_MEANINGS = {
+    "contains": ("a pod runs an AI agent, from the AI inventory", ("pod", "agent")),
+    "runs_as": ("a pod runs as a Kubernetes service account", ("pod", "service_account")),
+    "assumes": ("a service account can take an IAM role through IRSA", ("service_account", "iam_role")),
+    "has_permission": ("the role's IAM policies allow S3 actions on the bucket, such as reading its"
+                       " objects; bucket policies and SCPs are not evaluated", ("iam_role", "s3_bucket")),
+    "exposes": ("a Kubernetes Service sends traffic to a pod", ("service", "pod")),
+    "reachable_from": ("a Service can be reached from the internet", ("service", "internet")),
+    "uses_model": ("an AI agent calls a model endpoint", ("agent", "model_endpoint")),
+    "can_call": ("an AI agent can call a tool", ("agent", "tool")),
+    "reads": ("a bucket that an AI tool declares as its data source in the AI inventory; not an"
+              " IAM permission and not a read seen in logs", ("tool", "s3_bucket")),
+    "holds": ("no collector writes this edge yet", None),
+    "deploys_to": ("no collector writes this edge yet", None),
+    "protects": ("no collector writes this edge yet", None),
+}
+
 # edge type -> typed attrs a path rule may name in edge_where. exposes carries the
 # NetworkPolicy answer for a connection from outside the cluster (see netpol.py).
 EDGE_ATTRS = {
