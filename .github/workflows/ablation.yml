@@ -1,0 +1,97 @@
+name: ablation
+
+# Starts from the shipped reviewer, removes the controls named in redteam/ablation.json,
+# and replays only the payloads each removal should reopen. Qwen 2.5 1.5B, exact replay
+# plus three sampled runs.
+
+on:
+  push:
+    branches: [week17/ablation]
+    paths: ["redteam/ablation.json", ".github/workflows/ablation.yml"]
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: sampled runs per payload
+        default: "3"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ablation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  records:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Write the records store with a fresh canary
+        env:
+          PYTHONPATH: src:.
+        run: |
+          canary="CGCANARY$(openssl rand -hex 8 | tr a-f A-F)"
+          python3 -c "import json, sys; from redteam.store import local_records; json.dump(local_records(sys.argv[1]), open('records.json', 'w'), indent=1)" "$canary"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: review-records
+          path: records.json
+          if-no-files-found: error
+          retention-days: 1
+
+  replay:
+    needs: records
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      actions: read
+    env:
+      MODEL: qwen2.5:1.5b
+      RUNS: ${{ inputs.runs || '3' }}
+      OLLAMA_BIN: /home/runner/.local/ollama/bin/ollama
+      RECORDS_ARTIFACT: review-records
+      GH_TOKEN: ${{ github.token }}
+      PYTHONPATH: src:.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Cache the Ollama release and the model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/ollama-v0.40.13-linux-amd64.tar.zst
+            ~/.ollama/models
+          key: ollama-v0.40.13-qwen2.5:1.5b-${{ hashFiles('scripts/models.env') }}
+      - run: scripts/install-ollama.sh
+      - name: Start Ollama
+        run: |
+          nohup "$OLLAMA_BIN" serve > /tmp/ollama.log 2>&1 &
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:11434/api/version && break; sleep 1; done
+      - run: scripts/pull-model.sh "$MODEL"
+      - name: Replay the ablation plan
+        run: |
+          out="evidence/redteam/ablation/${MODEL//:/-}"
+          python -m redteam.replay --plan redteam/ablation.json --model "$MODEL" --runs "$RUNS" --out "$out"
+          lscpu | grep -m1 'Model name' | tee "$out/cpu.txt"
+          grep -m1 "loaded CPU backend" /tmp/ollama.log | sed 's|.*/||' | tee "$out/ollama-backend.txt"
+      - name: Check the report's claims
+        run: |
+          set -o pipefail
+          python -m redteam.assess "evidence/redteam/ablation/${MODEL//:/-}" --claims redteam/claims.json \
+            --model "$MODEL" --strict | tee -a "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ablation
+          path: |
+            evidence/redteam/ablation/
+            /tmp/ollama.log

@@ -109,23 +109,31 @@ def replay(payloads, off, *, provider, model_name, runs, store):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--mode", required=True, help="hardened, naive, or without:CONTROL[,CONTROL]")
+    ap.add_argument("--mode", help="hardened, naive, or without:CONTROL[,CONTROL]")
+    ap.add_argument("--plan", help="JSON file: a list of {mode, payloads, why}; replaces --mode and --payloads")
     ap.add_argument("--provider", choices=["ollama", "obedient"], default="ollama")
     ap.add_argument("--model", default="qwen2.5:1.5b")
     ap.add_argument("--runs", type=int, default=6)
     ap.add_argument("--payloads", default="", help="comma-separated payload IDs (default: all)")
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
-    off = modes.parse_mode(args.mode)
-    payloads = load_payloads([p for p in args.payloads.split(",") if p])
-    results = replay(payloads, off, provider=args.provider, model_name=args.model, runs=args.runs,
-                     store=store_mod.from_env())
-    out = Path(args.out) / modes.mode_name(off).replace(":", "-").replace(",", "+")
-    out.mkdir(parents=True, exist_ok=True)
-    for pid, record in results.items():
-        (out / f"{pid}.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
-        print(f"{pid:4} {record['mode']:40} exact={'hit' if record['exact_hit'] else 'miss'}"
-              f" sampled={record['sampled_hits']}/{record['sampled_runs']}")
+    if bool(args.plan) == bool(args.mode):
+        ap.error("give exactly one of --mode and --plan")
+    if args.plan:
+        plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
+    else:
+        plan = [{"mode": args.mode, "payloads": [p for p in args.payloads.split(",") if p]}]
+    store = store_mod.from_env()
+    for entry in plan:
+        off = modes.parse_mode(entry["mode"])
+        results = replay(load_payloads(entry["payloads"]), off, provider=args.provider, model_name=args.model,
+                         runs=args.runs, store=store)
+        out = Path(args.out) / modes.mode_name(off).replace(":", "-").replace(",", "+")
+        out.mkdir(parents=True, exist_ok=True)
+        for pid, record in results.items():
+            (out / f"{pid}.json").write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
+            print(f"{pid:4} {record['mode']:60} exact={'hit' if record['exact_hit'] else 'miss'}"
+                  f" sampled={record['sampled_hits']}/{record['sampled_runs']}")
     return 0
 
 
