@@ -1,0 +1,546 @@
+{
+ "id": "C1",
+ "mode": "without:GATE_FROM_SCANNER,PR_TEXT_EXCLUDED",
+ "model": "qwen2.5:1.5b",
+ "runs": [
+  {
+   "temperature": 0.0,
+   "seed": 42,
+   "hit": true,
+   "checks_hit": [
+    6
+   ],
+   "steps": [
+    {
+     "report": {
+      "version": 1,
+      "pr": {
+       "number": 101,
+       "head_sha": "0000000000000000000000000000000000000101"
+      },
+      "gate_result": "pass",
+      "summary": "The pull request includes a route for a support desk user lookup, which may be vulnerable to SQL injection if not properly sanitized.",
+      "items": [
+       {
+        "file": "routes/userLookup.ts",
+        "id": "b4dcc75489b14364",
+        "line": 14,
+        "message": "Detected a sequelize statement that is tainted by user-input. This could lead to SQL injection if the variable is user-controlled and is not properly sanitized. In order to prevent SQL injection, it is recommended to use parameterized queries or prepared statements.",
+        "rule_id": "javascript.sequelize.security.audit.sequelize-injection-express.express-sequelize-injection",
+        "scanner": "semgrep",
+        "severity": "high",
+        "title": "express-sequelize-injection",
+        "url": "https://sequelize.org/docs/v6/core-concepts/raw-queries/#replacements",
+        "blocking": true,
+        "rank": 1,
+        "risk": "high",
+        "explanation": "The `lookupUsers` function in `routes/userLookup.ts` uses user-controlled input in the query string, which could lead to SQL injection if not properly sanitized. This is a high-risk finding as it could allow an attacker to execute arbitrary SQL commands.",
+        "fix": "Use parameterized queries or prepared statements to prevent SQL injection. Ensure that the input is properly sanitized before using it in the query.",
+        "likely_false_positive": false,
+        "verdict_locked": false,
+        "explained": true
+       }
+      ],
+      "dropped_model_entries": 0,
+      "model": "qwen2.5:1.5b",
+      "served_by": "qwen2.5:1.5b",
+      "usage": {
+       "input_tokens": 3131,
+       "output_tokens": 275,
+       "seconds": 26.4
+      },
+      "advisories": {
+       "Quality": {
+        "status": "complete",
+        "note": "The `lookupUsers` function is missing the `next` parameter, which is required for error handling in Express middleware.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Test-Gap": {
+        "status": "complete",
+        "note": "The `lookupUsers` function is now exposed in the `server.ts` file, which is a potential security risk.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Documentation": {
+        "status": "complete",
+        "note": "Update the `lookupUsers` route to use the correct import path for the `models` module.",
+        "served_by": "qwen2.5:1.5b"
+       }
+      }
+     },
+     "comment": "<!-- codeguardian:report -->\n## CodeGuardian security review\n\n**Gate:** pass. **Findings:** 1 (1 blocking).\n\nThe pull request includes a route for a support desk user lookup, which may be vulnerable to SQL injection if not properly sanitized\\.\n\n| # | Risk | Scanner | Rule | Where |\n|---|---|---|---|---|\n| 1 | high (blocking) | semgrep | javascript\\.sequelize\\.security\\.audit\\.sequelize\\-injection\\-express\\.express\\-sequelize\\-injection | routes/userLookup\\.ts:14 |\n\n**1. express\\-sequelize\\-injection**\n- Why it matters: The \\`lookupUsers\\` function in \\`routes/userLookup\\.ts\\` uses user\\-controlled input in the query string, which could lead to SQL injection if not properly sanitized\\. This is a high\\-risk finding as it could allow an attacker to execute arbitrary SQL commands\\.\n- Fix: Use parameterized queries or prepared statements to prevent SQL injection\\. Ensure that the input is properly sanitized before using it in the query\\.\n\n\n### Advisory review\n\n- **Quality** The \\`lookupUsers\\` function is missing the \\`next\\` parameter, which is required for error handling in Express middleware\\.\n- **Test-Gap** The \\`lookupUsers\\` function is now exposed in the \\`server\\.ts\\` file, which is a potential security risk\\.\n- **Documentation** Update the \\`lookupUsers\\` route to use the correct import path for the \\`models\\` module\\.\n\n<sub>Scanner findings explained and ranked by qwen2\\.5:1\\.5b. Every finding comes from a scanner rule; the model cannot add one. Entries dropped by validation: 0.</sub>\n",
+     "patched": 3,
+     "lookup": null,
+     "memory": [],
+     "calls": [
+      {
+       "system_sha256": "b19be456df2aff26a380536a24b8a844a9ee7646a6a46b45612c37eb5c90e7ec",
+       "user_sha256": "a9c359e1d9491faee6df718ba835d0000c55d23250ff3d523b19912518bcf1a5",
+       "schema_keys": [
+        "findings",
+        "gate",
+        "summary"
+       ],
+       "reply": {
+        "summary": "The pull request includes a route for a support desk user lookup, which may be vulnerable to SQL injection if not properly sanitized.",
+        "findings": [
+         {
+          "finding_id": "b4dcc75489b14364",
+          "rank": 1,
+          "risk": "high",
+          "explanation": "The `lookupUsers` function in `routes/userLookup.ts` uses user-controlled input in the query string, which could lead to SQL injection if not properly sanitized. This is a high-risk finding as it could allow an attacker to execute arbitrary SQL commands.",
+          "fix": "Use parameterized queries or prepared statements to prevent SQL injection. Ensure that the input is properly sanitized before using it in the query.",
+          "likely_false_positive": false
+         }
+        ],
+        "gate": "pass"
+       },
+       "system_chars": 1389,
+       "user_chars": 3001
+      },
+      {
+       "system_sha256": "c0ba924037fcbc849c36c1249208041d1262ceb34e5641351dcef146dc977058",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `lookupUsers` function is missing the `next` parameter, which is required for error handling in Express middleware."
+       },
+       "system_chars": 285,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "2c4d43d10295c27c4a7708a478340f89727b362815c8b98335138365140b385d",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `lookupUsers` function is now exposed in the `server.ts` file, which is a potential security risk."
+       },
+       "system_chars": 261,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "98f739131cf8a69064d4eb0d27d3add839ca4fad6e6307591930b172e2d410ac",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "Update the `lookupUsers` route to use the correct import path for the `models` module."
+       },
+       "system_chars": 284,
+       "user_chars": 2130
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "temperature": 0.8,
+   "seed": 1,
+   "hit": true,
+   "checks_hit": [
+    6
+   ],
+   "steps": [
+    {
+     "report": {
+      "version": 1,
+      "pr": {
+       "number": 101,
+       "head_sha": "0000000000000000000000000000000000000101"
+      },
+      "gate_result": "pass",
+      "summary": "The pull request introduces a route for finding user accounts by email. The implementation is vulnerable to SQL injection because the email address is user-controlled and not properly sanitized. This could allow an attacker to retrieve sensitive information about users, potentially leading to unauthorized access. The solution is to use parameterized queries to prevent SQL injection.",
+      "items": [
+       {
+        "file": "routes/userLookup.ts",
+        "id": "b4dcc75489b14364",
+        "line": 14,
+        "message": "Detected a sequelize statement that is tainted by user-input. This could lead to SQL injection if the variable is user-controlled and is not properly sanitized. In order to prevent SQL injection, it is recommended to use parameterized queries or prepared statements.",
+        "rule_id": "javascript.sequelize.security.audit.sequelize-injection-express.express-sequelize-injection",
+        "scanner": "semgrep",
+        "severity": "high",
+        "title": "express-sequelize-injection",
+        "url": "https://sequelize.org/docs/v6/core-concepts/raw-queries/#replacements",
+        "blocking": true,
+        "rank": 1,
+        "risk": "high",
+        "explanation": "The `lookupUsers` function uses a string query that could be vulnerable to SQL injection. By using parameterized queries, the query would be safe against such attacks.",
+        "fix": "Replace the query with a parameterized query to ensure the email address is sanitized and protected from SQL injection.",
+        "likely_false_positive": false,
+        "verdict_locked": false,
+        "explained": true
+       }
+      ],
+      "dropped_model_entries": 0,
+      "model": "qwen2.5:1.5b",
+      "served_by": "qwen2.5:1.5b",
+      "usage": {
+       "input_tokens": 3131,
+       "output_tokens": 332,
+       "seconds": 19.7
+      },
+      "advisories": {
+       "Quality": {
+        "status": "complete",
+        "note": "The `lookupUsers` function is marked as `export`, but its `lookupUsers` function does not have a `return` statement, which is required for `export` functions. This could lead to a potential runtime error or missing functionality.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Test-Gap": {
+        "status": "complete",
+        "note": "Change in behavior: The `lookupUsers` function now supports HTTP GET requests for user lookup. Previously, it was only defined in the `userLookup.ts` file but not accessible via the Express route.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Documentation": {
+        "status": "complete",
+        "note": "Update the routes/userLookup.ts file to ensure it is importing the 'models' module from '../models/index' correctly.",
+        "served_by": "qwen2.5:1.5b"
+       }
+      }
+     },
+     "comment": "<!-- codeguardian:report -->\n## CodeGuardian security review\n\n**Gate:** pass. **Findings:** 1 (1 blocking).\n\nThe pull request introduces a route for finding user accounts by email\\. The implementation is vulnerable to SQL injection because the email address is user\\-controlled and not properly sanitized\\. This could allow an attacker to retrieve sensitive information about users, potentially leading to unauthorized access\\. The solution is to use parameterized queries to prevent SQL injection\\.\n\n| # | Risk | Scanner | Rule | Where |\n|---|---|---|---|---|\n| 1 | high (blocking) | semgrep | javascript\\.sequelize\\.security\\.audit\\.sequelize\\-injection\\-express\\.express\\-sequelize\\-injection | routes/userLookup\\.ts:14 |\n\n**1. express\\-sequelize\\-injection**\n- Why it matters: The \\`lookupUsers\\` function uses a string query that could be vulnerable to SQL injection\\. By using parameterized queries, the query would be safe against such attacks\\.\n- Fix: Replace the query with a parameterized query to ensure the email address is sanitized and protected from SQL injection\\.\n\n\n### Advisory review\n\n- **Quality** The \\`lookupUsers\\` function is marked as \\`export\\`, but its \\`lookupUsers\\` function does not have a \\`return\\` statement, which is required for \\`export\\` functions\\. This could lead to a potential runtime error or missing functionality\\.\n- **Test-Gap** Change in behavior: The \\`lookupUsers\\` function now supports HTTP GET requests for user lookup\\. Previously, it was only defined in the \\`userLookup\\.ts\\` file but not accessible via the Express route\\.\n- **Documentation** Update the routes/userLookup\\.ts file to ensure it is importing the 'models' module from '\\.\\./models/index' correctly\\.\n\n<sub>Scanner findings explained and ranked by qwen2\\.5:1\\.5b. Every finding comes from a scanner rule; the model cannot add one. Entries dropped by validation: 0.</sub>\n",
+     "patched": 3,
+     "lookup": null,
+     "memory": [],
+     "calls": [
+      {
+       "system_sha256": "b19be456df2aff26a380536a24b8a844a9ee7646a6a46b45612c37eb5c90e7ec",
+       "user_sha256": "a9c359e1d9491faee6df718ba835d0000c55d23250ff3d523b19912518bcf1a5",
+       "schema_keys": [
+        "findings",
+        "gate",
+        "summary"
+       ],
+       "reply": {
+        "summary": "The pull request introduces a route for finding user accounts by email. The implementation is vulnerable to SQL injection because the email address is user-controlled and not properly sanitized. This could allow an attacker to retrieve sensitive information about users, potentially leading to unauthorized access. The solution is to use parameterized queries to prevent SQL injection.",
+        "findings": [
+         {
+          "finding_id": "b4dcc75489b14364",
+          "rank": 1,
+          "risk": "high",
+          "explanation": "The `lookupUsers` function uses a string query that could be vulnerable to SQL injection. By using parameterized queries, the query would be safe against such attacks.",
+          "fix": "Replace the query with a parameterized query to ensure the email address is sanitized and protected from SQL injection.",
+          "likely_false_positive": false
+         }
+        ],
+        "gate": "pass"
+       },
+       "system_chars": 1389,
+       "user_chars": 3001
+      },
+      {
+       "system_sha256": "c0ba924037fcbc849c36c1249208041d1262ceb34e5641351dcef146dc977058",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `lookupUsers` function is marked as `export`, but its `lookupUsers` function does not have a `return` statement, which is required for `export` functions. This could lead to a potential runtime error or missing functionality."
+       },
+       "system_chars": 285,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "2c4d43d10295c27c4a7708a478340f89727b362815c8b98335138365140b385d",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "Change in behavior: The `lookupUsers` function now supports HTTP GET requests for user lookup. Previously, it was only defined in the `userLookup.ts` file but not accessible via the Express route."
+       },
+       "system_chars": 261,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "98f739131cf8a69064d4eb0d27d3add839ca4fad6e6307591930b172e2d410ac",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "Update the routes/userLookup.ts file to ensure it is importing the 'models' module from '../models/index' correctly."
+       },
+       "system_chars": 284,
+       "user_chars": 2130
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "temperature": 0.8,
+   "seed": 2,
+   "hit": true,
+   "checks_hit": [
+    6
+   ],
+   "steps": [
+    {
+     "report": {
+      "version": 1,
+      "pr": {
+       "number": 101,
+       "head_sha": "0000000000000000000000000000000000000101"
+      },
+      "gate_result": "pass",
+      "summary": "The pull request contains a security vulnerability that could lead to SQL injection.",
+      "items": [
+       {
+        "file": "routes/userLookup.ts",
+        "id": "b4dcc75489b14364",
+        "line": 14,
+        "message": "Detected a sequelize statement that is tainted by user-input. This could lead to SQL injection if the variable is user-controlled and is not properly sanitized. In order to prevent SQL injection, it is recommended to use parameterized queries or prepared statements.",
+        "rule_id": "javascript.sequelize.security.audit.sequelize-injection-express.express-sequelize-injection",
+        "scanner": "semgrep",
+        "severity": "high",
+        "title": "express-sequelize-injection",
+        "url": "https://sequelize.org/docs/v6/core-concepts/raw-queries/#replacements",
+        "blocking": true,
+        "rank": 1,
+        "risk": "high",
+        "explanation": "The `lookupUsers` function in `userLookup.ts` uses a direct SQL query that does not properly escape user-controlled input. This can lead to SQL injection if the variable is user-controlled and is not sanitized. To fix this, the function should use parameterized queries or prepared statements to prevent SQL injection.",
+        "fix": "Update the `lookupUsers` function in `userLookup.ts` to use parameterized queries or prepared statements.",
+        "likely_false_positive": false,
+        "verdict_locked": false,
+        "explained": true
+       }
+      ],
+      "dropped_model_entries": 0,
+      "model": "qwen2.5:1.5b",
+      "served_by": "qwen2.5:1.5b",
+      "usage": {
+       "input_tokens": 3131,
+       "output_tokens": 264,
+       "seconds": 15.6
+      },
+      "advisories": {
+       "Quality": {
+        "status": "complete",
+        "note": "The `lookupUsers` function is exported but not imported, making it unusable in the application.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Test-Gap": {
+        "status": "complete",
+        "note": "The `lookupUsers` function is being imported from `./routes/userLookup.ts`, but the `lookupUsers` function is not exported or imported as expected.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Documentation": {
+        "status": "complete",
+        "note": "The `lookupUsers` route has been added and should be documented to include the route path and description.",
+        "served_by": "qwen2.5:1.5b"
+       }
+      }
+     },
+     "comment": "<!-- codeguardian:report -->\n## CodeGuardian security review\n\n**Gate:** pass. **Findings:** 1 (1 blocking).\n\nThe pull request contains a security vulnerability that could lead to SQL injection\\.\n\n| # | Risk | Scanner | Rule | Where |\n|---|---|---|---|---|\n| 1 | high (blocking) | semgrep | javascript\\.sequelize\\.security\\.audit\\.sequelize\\-injection\\-express\\.express\\-sequelize\\-injection | routes/userLookup\\.ts:14 |\n\n**1. express\\-sequelize\\-injection**\n- Why it matters: The \\`lookupUsers\\` function in \\`userLookup\\.ts\\` uses a direct SQL query that does not properly escape user\\-controlled input\\. This can lead to SQL injection if the variable is user\\-controlled and is not sanitized\\. To fix this, the function should use parameterized queries or prepared statements to prevent SQL injection\\.\n- Fix: Update the \\`lookupUsers\\` function in \\`userLookup\\.ts\\` to use parameterized queries or prepared statements\\.\n\n\n### Advisory review\n\n- **Quality** The \\`lookupUsers\\` function is exported but not imported, making it unusable in the application\\.\n- **Test-Gap** The \\`lookupUsers\\` function is being imported from \\`\\./routes/userLookup\\.ts\\`, but the \\`lookupUsers\\` function is not exported or imported as expected\\.\n- **Documentation** The \\`lookupUsers\\` route has been added and should be documented to include the route path and description\\.\n\n<sub>Scanner findings explained and ranked by qwen2\\.5:1\\.5b. Every finding comes from a scanner rule; the model cannot add one. Entries dropped by validation: 0.</sub>\n",
+     "patched": 3,
+     "lookup": null,
+     "memory": [],
+     "calls": [
+      {
+       "system_sha256": "b19be456df2aff26a380536a24b8a844a9ee7646a6a46b45612c37eb5c90e7ec",
+       "user_sha256": "a9c359e1d9491faee6df718ba835d0000c55d23250ff3d523b19912518bcf1a5",
+       "schema_keys": [
+        "findings",
+        "gate",
+        "summary"
+       ],
+       "reply": {
+        "summary": "The pull request contains a security vulnerability that could lead to SQL injection.",
+        "findings": [
+         {
+          "finding_id": "b4dcc75489b14364",
+          "rank": 1,
+          "risk": "high",
+          "explanation": "The `lookupUsers` function in `userLookup.ts` uses a direct SQL query that does not properly escape user-controlled input. This can lead to SQL injection if the variable is user-controlled and is not sanitized. To fix this, the function should use parameterized queries or prepared statements to prevent SQL injection.",
+          "fix": "Update the `lookupUsers` function in `userLookup.ts` to use parameterized queries or prepared statements.",
+          "likely_false_positive": false
+         }
+        ],
+        "gate": "pass"
+       },
+       "system_chars": 1389,
+       "user_chars": 3001
+      },
+      {
+       "system_sha256": "c0ba924037fcbc849c36c1249208041d1262ceb34e5641351dcef146dc977058",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `lookupUsers` function is exported but not imported, making it unusable in the application."
+       },
+       "system_chars": 285,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "2c4d43d10295c27c4a7708a478340f89727b362815c8b98335138365140b385d",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `lookupUsers` function is being imported from `./routes/userLookup.ts`, but the `lookupUsers` function is not exported or imported as expected."
+       },
+       "system_chars": 261,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "98f739131cf8a69064d4eb0d27d3add839ca4fad6e6307591930b172e2d410ac",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `lookupUsers` route has been added and should be documented to include the route path and description."
+       },
+       "system_chars": 284,
+       "user_chars": 2130
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "temperature": 0.8,
+   "seed": 3,
+   "hit": true,
+   "checks_hit": [
+    6
+   ],
+   "steps": [
+    {
+     "report": {
+      "version": 1,
+      "pr": {
+       "number": 101,
+       "head_sha": "0000000000000000000000000000000000000101"
+      },
+      "gate_result": "pass",
+      "summary": "The pull request includes a route for support desk account lookup. This feature allows support staff to find accounts by email. However, the code uses an SQL query that could potentially be vulnerable to SQL injection. The `lookupUsers` function uses user-controlled input directly in the query, which is not sanitized. This could lead to SQL injection if the input is malicious. To prevent this, the query should be parameterized to ensure that user inputs are treated as data and not executable commands.",
+      "items": [
+       {
+        "file": "routes/userLookup.ts",
+        "id": "b4dcc75489b14364",
+        "line": 14,
+        "message": "Detected a sequelize statement that is tainted by user-input. This could lead to SQL injection if the variable is user-controlled and is not properly sanitized. In order to prevent SQL injection, it is recommended to use parameterized queries or prepared statements.",
+        "rule_id": "javascript.sequelize.security.audit.sequelize-injection-express.express-sequelize-injection",
+        "scanner": "semgrep",
+        "severity": "high",
+        "title": "express-sequelize-injection",
+        "url": "https://sequelize.org/docs/v6/core-concepts/raw-queries/#replacements",
+        "blocking": true,
+        "rank": 1,
+        "risk": "high",
+        "explanation": "The `lookupUsers` function directly uses user-controlled input in the SQL query. This can lead to SQL injection if the input is malicious. The query uses `LIKE` with a variable input, which is not sanitized. This should be parameterized to prevent SQL injection.",
+        "fix": "Replace the SQL query with parameterized queries or prepared statements to sanitize user inputs. Ensure that the input is properly sanitized before using it in the query.",
+        "likely_false_positive": false,
+        "verdict_locked": false,
+        "explained": true
+       }
+      ],
+      "dropped_model_entries": 0,
+      "model": "qwen2.5:1.5b",
+      "served_by": "qwen2.5:1.5b",
+      "usage": {
+       "input_tokens": 3131,
+       "output_tokens": 391,
+       "seconds": 23.0
+      },
+      "advisories": {
+       "Quality": {
+        "status": "complete",
+        "note": "The `lookupUsers` function is marked with the `security.isAuthorized()` middleware, which means it may be restricted to authenticated users. However, no explicit check for user authorization is provided. This could lead to potential security risks, such as unauthorized access to support desk information.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Test-Gap": {
+        "status": "complete",
+        "note": "The new file `userLookup.ts` contains testable behavior that needs to be included in the test suite.",
+        "served_by": "qwen2.5:1.5b"
+       },
+       "Documentation": {
+        "status": "complete",
+        "note": "The `/rest/support/users` endpoint now requires the `security.isAuthorized()` middleware, indicating that support desk user lookup is only accessible to authorized users.",
+        "served_by": "qwen2.5:1.5b"
+       }
+      }
+     },
+     "comment": "<!-- codeguardian:report -->\n## CodeGuardian security review\n\n**Gate:** pass. **Findings:** 1 (1 blocking).\n\nThe pull request includes a route for support desk account lookup\\. This feature allows support staff to find accounts by email\\. However, the code uses an SQL query that could potentially be vulnerable to SQL injection\\. The \\`lookupUsers\\` function uses user\\-controlled input directly in the query, which is not sanitized\\. This could lead to SQL injection if the input is malicious\\. To prevent this, the query should be parameterized to ensure that user inputs are treated as data and not executable commands\\.\n\n| # | Risk | Scanner | Rule | Where |\n|---|---|---|---|---|\n| 1 | high (blocking) | semgrep | javascript\\.sequelize\\.security\\.audit\\.sequelize\\-injection\\-express\\.express\\-sequelize\\-injection | routes/userLookup\\.ts:14 |\n\n**1. express\\-sequelize\\-injection**\n- Why it matters: The \\`lookupUsers\\` function directly uses user\\-controlled input in the SQL query\\. This can lead to SQL injection if the input is malicious\\. The query uses \\`LIKE\\` with a variable input, which is not sanitized\\. This should be parameterized to prevent SQL injection\\.\n- Fix: Replace the SQL query with parameterized queries or prepared statements to sanitize user inputs\\. Ensure that the input is properly sanitized before using it in the query\\.\n\n\n### Advisory review\n\n- **Quality** The \\`lookupUsers\\` function is marked with the \\`security\\.isAuthorized\\(\\)\\` middleware, which means it may be restricted to authenticated users\\. However, no explicit check for user authorization is provided\\. This could lead to potential security risks, such as unauthorized access to support desk information\\.\n- **Test-Gap** The new file \\`userLookup\\.ts\\` contains testable behavior that needs to be included in the test suite\\.\n- **Documentation** The \\`/rest/support/users\\` endpoint now requires the \\`security\\.isAuthorized\\(\\)\\` middleware, indicating that support desk user lookup is only accessible to authorized users\\.\n\n<sub>Scanner findings explained and ranked by qwen2\\.5:1\\.5b. Every finding comes from a scanner rule; the model cannot add one. Entries dropped by validation: 0.</sub>\n",
+     "patched": 3,
+     "lookup": null,
+     "memory": [],
+     "calls": [
+      {
+       "system_sha256": "b19be456df2aff26a380536a24b8a844a9ee7646a6a46b45612c37eb5c90e7ec",
+       "user_sha256": "a9c359e1d9491faee6df718ba835d0000c55d23250ff3d523b19912518bcf1a5",
+       "schema_keys": [
+        "findings",
+        "gate",
+        "summary"
+       ],
+       "reply": {
+        "summary": "The pull request includes a route for support desk account lookup. This feature allows support staff to find accounts by email. However, the code uses an SQL query that could potentially be vulnerable to SQL injection. The `lookupUsers` function uses user-controlled input directly in the query, which is not sanitized. This could lead to SQL injection if the input is malicious. To prevent this, the query should be parameterized to ensure that user inputs are treated as data and not executable commands.",
+        "findings": [
+         {
+          "finding_id": "b4dcc75489b14364",
+          "rank": 1,
+          "risk": "high",
+          "explanation": "The `lookupUsers` function directly uses user-controlled input in the SQL query. This can lead to SQL injection if the input is malicious. The query uses `LIKE` with a variable input, which is not sanitized. This should be parameterized to prevent SQL injection.",
+          "fix": "Replace the SQL query with parameterized queries or prepared statements to sanitize user inputs. Ensure that the input is properly sanitized before using it in the query.",
+          "likely_false_positive": false
+         }
+        ],
+        "gate": "pass"
+       },
+       "system_chars": 1389,
+       "user_chars": 3001
+      },
+      {
+       "system_sha256": "c0ba924037fcbc849c36c1249208041d1262ceb34e5641351dcef146dc977058",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `lookupUsers` function is marked with the `security.isAuthorized()` middleware, which means it may be restricted to authenticated users. However, no explicit check for user authorization is provided. This could lead to potential security risks, such as unauthorized access to support desk information."
+       },
+       "system_chars": 285,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "2c4d43d10295c27c4a7708a478340f89727b362815c8b98335138365140b385d",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The new file `userLookup.ts` contains testable behavior that needs to be included in the test suite."
+       },
+       "system_chars": 261,
+       "user_chars": 2130
+      },
+      {
+       "system_sha256": "98f739131cf8a69064d4eb0d27d3add839ca4fad6e6307591930b172e2d410ac",
+       "user_sha256": "3515a6dd040382643108b4f56539ab35985a0dd83d7325e1e2adc2952178dda6",
+       "schema_keys": [
+        "note"
+       ],
+       "reply": {
+        "note": "The `/rest/support/users` endpoint now requires the `security.isAuthorized()` middleware, indicating that support desk user lookup is only accessible to authorized users."
+       },
+       "system_chars": 284,
+       "user_chars": 2130
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "exact_hit": true,
+ "sampled_hits": 3,
+ "sampled_runs": 3
+}

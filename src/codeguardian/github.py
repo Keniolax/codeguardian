@@ -11,7 +11,7 @@ PROTECTED_PATHS = [
     ".github/*", ".gate/*", ".semgrepignore", ".gitleaks.toml", ".gitleaksignore",
     ".trivyignore", ".trivyignore.yaml", "trivy.yaml", ".zap/*",
 ]
-APPROVAL_LABEL = "gate-change-approved"
+CONFIG_APPROVAL = "Approve CodeGuardian config change"
 GUARD_CONTEXT = "codeguardian/config-guard"
 
 
@@ -71,29 +71,59 @@ def protected_changes(filenames):
     return sorted(f for f in filenames if any(fnmatch.fnmatch(f, p) for p in PROTECTED_PATHS))
 
 
-def guard(gh, number, head_sha):
-    """Set a commit status that fails when the change edits the gate or its config.
-
-    This runs from the base branch (workflow_run), so the pull request cannot change it.
-    It covers the hole in any pull_request workflow: the change can edit the workflow that
-    judges it. A maintainer can approve such a change with a label.
-    """
-    pull = verified_pull(gh, number, head_sha)
-    files, page = [], 1
-    while page <= 30:
+def changed_paths(gh, number, expected_count):
+    if type(expected_count) is not int or not 0 <= expected_count <= 3000:
+        return None
+    files = []
+    for page in range(1, 31):
         batch = gh.call("GET", f"/repos/{gh.repo}/pulls/{int(number)}/files?per_page=100&page={page}")
-        if not batch:
+        files.extend(batch)
+        if len(batch) < 100:
             break
-        files += [f["filename"] for f in batch]
-        page += 1
-    touched = protected_changes(files)
-    approved = any(lbl.get("name") == APPROVAL_LABEL for lbl in pull.get("labels", []))
-    if not touched:
+    names = {entry["filename"] for entry in files}
+    if len(files) != expected_count or len(names) != expected_count:
+        return None
+    if any(entry.get("status") == "renamed" and not entry.get("previous_filename") for entry in files):
+        return None
+    return names | {entry["previous_filename"] for entry in files if entry.get("previous_filename")}
+
+
+def config_approved(gh, number, head_sha, approver_id, pull):
+    author = (pull.get("user") or {}).get("id")
+    if approver_id is None or author is None or approver_id == author:
+        return False
+    decision = {}
+    for page in range(1, 31):
+        reviews = gh.call("GET", f"/repos/{gh.repo}/pulls/{int(number)}/reviews?per_page=100&page={page}")
+        for review in reviews:
+            user = review.get("user") or {}
+            if (user.get("id") == approver_id and user.get("type") == "User"
+                    and review.get("state") not in ("COMMENTED", "PENDING")):
+                decision = review
+        if len(reviews) < 100:
+            return (decision.get("state") == "APPROVED"
+                    and decision.get("commit_id") == head_sha
+                    and (decision.get("body") or "").strip() == CONFIG_APPROVAL)
+    return False
+
+
+def guard(gh, number, head_sha, *, approver_id=None):
+    """Check gate changes in the trusted workflow and write a status on the scanned commit."""
+    pull = verified_pull(gh, number, head_sha)
+    paths = changed_paths(gh, number, pull.get("changed_files"))
+    touched = protected_changes(paths or ())
+    if paths is None:
+        state, text = "failure", "Could not verify the complete pull request file list."
+    elif not touched:
         state, text = "success", "No gate or scanner config changed."
-    elif approved:
-        state, text = "success", f"Gate config changed ({len(touched)} files); approved by label."
+    elif config_approved(gh, number, head_sha, approver_id, pull):
+        state, text = "success", f"Gate config changed ({len(touched)} paths). Approved for this commit."
     else:
-        state, text = "failure", f"Changes gate config ({', '.join(touched)[:100]}); needs label {APPROVAL_LABEL}."
+        state, text = "failure", "Gate config changes need a maintainer review for this commit."
+    live = verified_pull(gh, number, head_sha)
+    if (live["base"]["sha"] != pull["base"]["sha"]
+            or live.get("changed_files") != pull.get("changed_files")):
+        raise RuntimeError("pull request base or file count changed during the guard check")
     gh.call("POST", f"/repos/{gh.repo}/statuses/{head_sha}",
             {"state": state, "context": GUARD_CONTEXT, "description": text[:140]})
     return state, touched

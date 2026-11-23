@@ -19,6 +19,8 @@ def main(argv=None):
     p.add_argument("--input", required=True, help="directory with decision.json, pr.json, change.diff")
     p.add_argument("--out", required=True)
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama"])
+    p.add_argument("--with-standards", action="store_true", help="enable one scoped review standards lookup")
+    p.add_argument("--with-reviewers", action="store_true", help="add Quality, Test-Gap and Documentation notes")
 
     p = sub.add_parser("render", help="print the comment a report would produce")
     p.add_argument("--report", required=True)
@@ -33,6 +35,7 @@ def main(argv=None):
     p.add_argument("--repo", required=True)
     p.add_argument("--head-sha", required=True)
     p.add_argument("--pr", type=int, required=True)
+    p.add_argument("--approver-id", type=int, help="GitHub user ID of the designated config reviewer")
 
     from .v2 import cli as v2_cli
 
@@ -50,10 +53,11 @@ def main(argv=None):
         from .providers import get_provider
         from .supervisor import review
 
-        report = review(a.input, get_provider(a.provider))
+        report = review(a.input, get_provider(a.provider), with_standards=a.with_standards,
+                        with_reviewers=a.with_reviewers)
         Path(a.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(f"{len(report['items'])} findings, {report['dropped_model_entries']} model entries dropped,"
-              f" served by {report['served_by']}")
+              f" served by {report['served_by'] or 'no Security model'}")
         return 0
 
     if a.cmd == "render":
@@ -64,8 +68,10 @@ def main(argv=None):
 
     from .github import GitHub, guard, post_report, verified_pull
 
-    if not SHA.match(a.head_sha):
+    if not SHA.fullmatch(a.head_sha):
         ap.error("--head-sha must be a 40-character hex SHA")
+    if a.cmd == "guard" and a.approver_id is not None and a.approver_id <= 0:
+        ap.error("--approver-id must be a positive GitHub user ID")
     gh = GitHub(a.repo)
 
     if a.cmd == "post":
@@ -79,7 +85,7 @@ def main(argv=None):
         return 0
 
     if a.cmd == "guard":
-        state, touched = guard(gh, a.pr, a.head_sha)
+        state, touched = guard(gh, a.pr, a.head_sha, approver_id=a.approver_id)
         print(f"config-guard {state}; protected files changed: {touched}")
         return 0
     return 1

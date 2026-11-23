@@ -8,6 +8,9 @@ inputs:
   head-sha:
     description: Head SHA from the workflow_run event
     required: true
+  approver-id:
+    description: GitHub user ID of the designated maintainer, set by the default-branch workflow
+    required: true
   github-token:
     description: "Token with statuses: write and pull-requests: read"
     required: true
@@ -30,6 +33,7 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ inputs.pr-number }}
         HEAD_SHA: ${{ inputs.head-sha }}
+        APPROVER_ID: ${{ inputs.approver-id }}
 
       run: |
-        "$RUNNER_TEMP/cg-venv/bin/python" -m codeguardian guard --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --head-sha "$HEAD_SHA"
+        "$RUNNER_TEMP/cg-venv/bin/python" -m codeguardian guard --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --head-sha "$HEAD_SHA" --approver-id "$APPROVER_ID"

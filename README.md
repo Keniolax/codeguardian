@@ -1,16 +1,24 @@
 # CodeGuardian
 
-CodeGuardian reviews pull requests for security problems. A deterministic gate runs four
-scanners and blocks the merge; a Security agent, backed by a Claude model, explains and
-ranks what the scanners found in one pull-request comment. The model cannot add, move or
-hide a finding. It can only explain the ones a scanner rule produced.
+CodeGuardian runs four scanners on pull requests. The gate blocks new findings that match
+its policy. A Security reviewer explains findings in a PR comment. The scanner artifact
+supplies the gate decision and finding locations.
 
-This is version 1 (week 14 of a security engineering course): the gate, a supervisor and
-one Security agent. The repository under test is
-[codeguardian-target](https://github.com/Keniolax/codeguardian-target), a pinned copy of
-OWASP Juice Shop.
+Week 17 adds a scoped standards lookup, three advisory reviewers, and approval for protected
+changes on the current commit. Then it attacks the reviewer through the pull request: six
+attacks on two local models and four attack PRs against Claude. Two attacks worked on the
+shipped reviewer. A code comment or a standards file could make the model clear a real SQL
+injection or a root container user, and a workflow comment could make the advisory notes
+tell the maintainer to approve a gate bypass. Two code changes stop both, on 0 of 14 runs
+per attack. The training repository is a pinned copy of OWASP Juice Shop.
+[CodeGuardian training target](https://github.com/Keniolax/codeguardian-target).
 
-![Architecture](diagram/architecture.png)
+![Week 17 review and approval architecture](diagram/week-17.png)
+
+![Week 17 attack harness](diagram/week-17-redteam.png)
+
+[Week 17 evaluation and attack results](docs/week-17-report.md) ·
+[Editable diagrams](diagram/) · [Week 14 diagram](diagram/architecture.png)
 
 ## What it does
 
@@ -20,15 +28,15 @@ rules, ignore lists and suppressions from the base commit, so a pull request can
 itself. It has no secrets.
 
 **CodeGuardian** (`codeguardian.yml`, on `workflow_run` from `main`) never checks out the
-pull request. It treats the gate's artifact as untrusted data and splits the work so that
-no job holds two credentials:
+pull request. It treats the gate artifact as untrusted data and gives each step the
+credentials it needs.
 
 | Job | Holds | Does |
 |---|---|---|
 | prepare | read access to artifacts | checks the PR number is an integer and the head SHA matches the event |
-| review | the Claude API key, no GitHub token | sends findings and the diff to the Security agent; no tools |
+| review | `actions: read` for download, Claude API key for review | explains scanner findings and can add advisory notes |
 | post | `pull-requests: write`, no API key | re-checks the report, escapes it, updates one comment |
-| guard | `statuses: write`, no API key | sets `codeguardian/config-guard`: fails if the PR edits `.github/` or `.gate/` without the `gate-change-approved` label |
+| guard | `statuses: write`, `pull-requests: read` | sets `codeguardian/config-guard` for protected configuration changes |
 
 The model returns JSON in a fixed schema (structured outputs), naming findings only by the
 gate's finding ID. `report.py` drops any entry with an unknown ID and takes scanner, rule,
@@ -42,7 +50,9 @@ names the model that answered. `OllamaProvider` runs the same agent on a local m
 
 ## How to run it
 
-In the target repository, open a pull request. The gate runs, then CodeGuardian comments.
+The training target runs the Week 17 review, guard, and post actions. Use the local fixture
+to try the reviewer. [Training target rollout](https://github.com/Keniolax/codeguardian-target/pull/18) ·
+[Week 17 run instructions](docs/week-17-report.md#run-the-checks).
 
 The actions in `actions/` are used by the target repository's workflow, pinned by commit
 SHA. They need the repository secret `ANTHROPIC_API_KEY`, and this repository's Actions
@@ -58,6 +68,54 @@ PYTHONPATH=src .venv/bin/python -m codeguardian render --report report.json
 ```
 
 Dependencies are hash-locked, and every release in the lock files is at least 14 days old.
+
+### Week 17 review options
+
+Add `--with-standards` to the local `review` command to let the reviewer request one record
+from its bundled catalog. The model sees the catalog IDs that match scanner rules in the
+current review before it sees the PR diff. Code checks the tool name, arguments, and ID
+before reading the record. It passes the approved record to the model separately from the
+diff. A catalog match adds one model request.
+
+Add `--with-reviewers` to get notes on correctness, missing tests, and documentation.
+CodeGuardian can make up to three model requests, even when the scanners find nothing.
+Each role reads the first 60,000 characters of the diff on its own. The JSON report records
+which model answered each request. The notes appear under **Advisory review** when you
+render the report. If an advisory request fails, CodeGuardian saves the scanner report and
+any notes it already has. You can use both flags together.
+
+In a workflow, set the review action inputs `with-standards` and `with-reviewers` to
+`'true'` to enable these options.
+
+### Week 17 approval for gate changes
+
+Set `approver-id` on the guard action to the GitHub user ID of a maintainer. Set it in the
+default-branch workflow. For a protected change, the maintainer reviews the current PR
+commit and chooses **Approve** with the review body `Approve CodeGuardian config change`.
+Run the guard again when the review decision changes. Each run checks the latest decision
+from that maintainer and writes a status on the reviewed commit. The PR author cannot supply
+this approval.
+
+The `credential-scope` CI job uses an `actions: read` token to download a one-day fixture
+artifact. It also checks that GitHub denies the same token access to secret metadata.
+
+### Week 17 attack harness
+
+`redteam/` replays saved attack payloads against the shipped reviewer and against a naive
+design with each control replaced. The `redteam` workflow runs them on two pinned local
+models, and `ablation` removes one control at a time. Both fail if a result in
+`redteam/claims.json` changes. A blocking finding now keeps the scanner's verdict, and a
+pull request that changes protected configuration gets no model text. To replay every
+payload with a scripted model that obeys any injected text:
+
+```
+PYTHONPATH=src:. .venv/bin/python -m redteam.replay --provider obedient --mode naive --runs 0 --out /tmp/rt
+PYTHONPATH=src:. .venv/bin/python -m redteam.replay --provider obedient --mode hardened --runs 0 --out /tmp/rt
+```
+
+Every attack hits in naive mode and misses in hardened mode. The payloads are training
+attacks on this project's own reviewer; they hold no working exploit for other systems.
+[Results and how to replay with a live model](docs/week-17-report.md).
 
 ## What was learned
 
@@ -82,15 +140,28 @@ cost for the whole week was about $0.10 (about 22,000 input and 5,000 output tok
 - Let the model explain, not decide. The gate decides pass or fail from scanner rules
   alone. The model's output is joined to scanner findings by ID, so a wrong or injected
   answer can change the wording of a comment, not whether a finding exists.
-- One job, one credential. The job that reads untrusted text and calls the model has no
-  GitHub token; the job that writes to GitHub never calls the model. A stale-report check
-  refused to post a report for a commit that was no longer the pull request's head.
+- Give each step the access it needs. The download step reads the artifact. The model step
+  uses the model key. The publisher holds the PR write token and checks the live head before
+  posting. In testing, that check refused a report for an older commit.
 - Escape everything that came from the pull request. A comment renderer that passes model
   text through could be made to load an attacker's image URL with data in it. The tests
   cover images, links, HTML and @-mentions.
-- An approval control only works if the author of a change cannot grant it. Changes to
-  `.gate/` need the `gate-change-approved` label, applied by a maintainer after review,
-  never by the automation that opened the change.
+
+Measured in week 17, on Qwen 2.5 1.5B and Llama 3.2 3B with pinned replays:
+
+- A prompt rule is not a control. The shipped prompt told the model to ignore instructions
+  in the PR, and the model still cleared a real finding on up to 6 of 7 runs. Taking the
+  decision away from the model stopped it on every run.
+- A token's scope is not the tool's scope. The lookup's `actions: read` token can read every
+  artifact in the repository. In the naive design, Llama read the canary record on 7 of 7
+  runs. The shipped lookup checks the record ID against the findings in the review, and
+  that check refused the same request.
+- Let the human decide without the model's voice next to the decision. On a protected
+  workflow change, the advisory notes repeated the attacker's "pre-approved" claim on every
+  Qwen run. Those PRs now get no model text.
+- A design that lets the model set the gate fails with no attacker: Qwen passed a clean SQL
+  injection on 6 of 7 runs.
+- Claude resisted all four live attack PRs. The fixes do not rely on that.
 
 ## Version 2 (in progress)
 

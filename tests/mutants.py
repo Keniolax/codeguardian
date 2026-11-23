@@ -10,6 +10,9 @@ if any mutant survives or breaks, if the tree is not clean afterwards, or if a t
 name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy, -NP or order
 files, has no mutant. In the NetworkPolicy, -NP and order files every parametrized case must
 also have a mutant of its own.
+
+The reviewer's week 17 mutants live in tests/mutants_week17.py, which is frozen with the
+reviewer; this file runs them after its own.
 """
 
 import ast
@@ -18,6 +21,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+from mutants_week17 import MUTANTS as REVIEWER_MUTANTS
 
 ROOT = Path(__file__).resolve().parents[1]
 V2 = "src/codeguardian/v2/"
@@ -850,7 +855,11 @@ MUTANTS = [
     ("findings --history ignored", V2 + "cli.py", "        if a.history:", "        if False:", [T(HIST_OUT, ORDER)]),
     ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 3 if refused else 0", "    return 0",
      [T(INGEST, ORDER)]),
+    ("unknown option of a command ignored", "src/codeguardian/cli.py",
+     '        ap.error(f"unrecognized arguments: {\' \'.join(extra)}")', "        pass",
+     [T("test_unknown_option_of_a_command_is_refused_with_exit_2", CORE)]),
 ]
+MUTANTS += REVIEWER_MUTANTS
 
 
 def pytest(node):

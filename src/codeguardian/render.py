@@ -9,6 +9,8 @@ only reference links on a short list of documentation hosts are kept.
 import re
 from urllib.parse import urlparse
 
+from .agents import ADVISORY_ROLES
+
 MARKER = "<!-- codeguardian:report -->"
 
 ALLOWED_LINK_HOSTS = {
@@ -66,9 +68,26 @@ def render(report):
                 lines.append(f"- Fix: {safe(i['fix'])}")
                 if i.get("likely_false_positive"):
                     lines.append("- The reviewer thinks this may be a false positive. A person should confirm.")
+                if i.get("verdict_locked"):
+                    lines.append("- The model tried to lower or clear this blocking finding. The scanner's"
+                                 " result stands; only a reviewed entry in .gate/suppressions.json clears it.")
             else:
                 lines.append(f"- Scanner says: {safe(i.get('message', ''))}")
             lines.append("")
+    advisories = report.get("advisories", {})
+    advisory_lines = []
+    for role in ADVISORY_ROLES:
+        result = advisories.get(role)
+        if result is None:
+            continue
+        if result["note"]:
+            advisory_lines.append(f"- **{role}** {safe(result['note'])}")
+        elif result["status"] == "refused":
+            advisory_lines.append(f"- **{role}** The model declined the request. Advisory review stopped.")
+        elif result["status"] == "unavailable":
+            advisory_lines.append(f"- **{role}** The model request failed. Advisory review stopped.")
+    if advisory_lines:
+        lines += ["", "### Advisory review", "", *advisory_lines, ""]
     model = report.get("served_by") or report.get("model")
     lines.append(f"<sub>Scanner findings explained and ranked by {safe(model or 'no model (nothing to explain)')}."
                  f" Every finding comes from a scanner rule; the model cannot add one."

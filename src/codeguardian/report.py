@@ -6,6 +6,8 @@ artifact, never from the model, so the model can rank and explain findings but c
 invent one, move one, or hide one.
 """
 
+from .agents import ADVISORY_ROLES, ADVISORY_STATUSES, MAX_ADVISORY_NOTE
+
 RISKS = ("critical", "high", "medium", "low", "info")
 
 # JSON schema sent to the model as a structured-output format.
@@ -69,13 +71,24 @@ def validate_agent_output(raw, findings):
             rank = entry["rank"]
             if not isinstance(rank, int) or isinstance(rank, bool):
                 raise ReportError("rank must be an integer")
+            explanation, fix = _text(entry["explanation"], MAX_TEXT), _text(entry["fix"], MAX_TEXT)
+            likely_fp, locked = bool(entry["likely_false_positive"]), False
+            if by_id[fid].get("blocking"):
+                # The model reads text the PR author wrote, so it may not lower or clear a
+                # blocking finding. Only a reviewed entry in the suppressions file clears one.
+                floor = by_id[fid].get("severity")
+                if floor in RISKS and RISKS.index(risk) > RISKS.index(floor):
+                    risk, locked = floor, True
+                if likely_fp:
+                    likely_fp, locked = False, True
             items.append({
                 **by_id[fid],
                 "rank": rank,
                 "risk": risk,
-                "explanation": _text(entry["explanation"], MAX_TEXT),
-                "fix": _text(entry["fix"], MAX_TEXT),
-                "likely_false_positive": bool(entry["likely_false_positive"]),
+                "explanation": explanation,
+                "fix": fix,
+                "likely_false_positive": likely_fp,
+                "verdict_locked": locked,
                 "explained": True,
             })
             seen.add(fid)
@@ -84,7 +97,8 @@ def validate_agent_output(raw, findings):
     for f in findings:
         if f["id"] not in seen:
             items.append({**f, "rank": 10_000, "risk": f["severity"], "explanation": "",
-                          "fix": "", "likely_false_positive": False, "explained": False})
+                          "fix": "", "likely_false_positive": False, "verdict_locked": False,
+                          "explained": False})
     items.sort(key=lambda i: (i["rank"], RISKS.index(i["risk"]) if i["risk"] in RISKS else 9))
     for n, item in enumerate(items, 1):
         item["rank"] = n
@@ -120,4 +134,22 @@ def check_report(report):
                 raise ReportError(f"item field {key} must be a string")
         if not isinstance(item.get("line"), int):
             raise ReportError("item line must be an integer")
+        if item.get("blocking") and item.get("likely_false_positive"):
+            raise ReportError("a blocking finding cannot be marked a likely false positive")
+        floor = item.get("severity")
+        if item.get("blocking") and floor in RISKS and item["risk"] in RISKS \
+                and RISKS.index(item["risk"]) > RISKS.index(floor):
+            raise ReportError("a blocking finding cannot be ranked below its scanner severity")
+    advisories = report.get("advisories", {})
+    if not isinstance(advisories, dict):
+        raise ReportError("advisories must be an object")
+    for role, result in advisories.items():
+        if role not in ADVISORY_ROLES or not isinstance(result, dict) or result.keys() != {"status", "note", "served_by"}:
+            raise ReportError("advisories must map known roles to results")
+        status, note, model = result["status"], result["note"], result["served_by"]
+        if not (isinstance(status, str) and status in ADVISORY_STATUSES
+                and isinstance(note, str) and len(note) <= MAX_ADVISORY_NOTE
+                and (status == "complete" or not note)
+                and (model is None or isinstance(model, str))):
+            raise ReportError("advisories contain an invalid result")
     return report
