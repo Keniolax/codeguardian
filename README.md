@@ -189,8 +189,10 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   answers are joined by ID, and the model cannot open, close or change a finding.
 - `ask` sends the model the query language: each entity type with its attrs, and each
   edge type with what it means and the two entity types it joins. When a query finds
-  nothing and one of its walk steps cannot match any edge in the model, the answer says
-  "Not an answer" and names that step, so an empty answer does not read as "none".
+  nothing and one of its walk steps cannot match any live edge in the model, the answer
+  says "Not an answer" in place of "no rows" and names that step. After a step with no
+  target type, the check uses the types that the step's edges reach. So an empty answer
+  does not read as "none".
 - The IAM resolver reads Allow statements and wildcards only. Anything else (conditions,
   Deny, NotAction, boundaries, SCPs, bucket policies) is listed as not evaluated.
 
@@ -265,9 +267,18 @@ four times in four, but it started from the roles, so it could not apply the buc
 walk chains and what a row shows, gave the right three roles four times in four. Three
 other questions were then answered right once each: pods reachable from the internet,
 the roles the AI agents can use, and the buckets their tools declare. Before the sentence
-on chains, the first of these gave a query that could not match, and the answer said so
-instead of "no rows". Seven questions on one fixture are a small sample. A wrong query
-can still give a wrong answer that is not empty, and no check here catches that.
+on chains, the first of these gave a query that could not match, and the answer said so.
+Seven questions on one fixture are a small sample. A wrong query can still give a wrong
+answer that is not empty, and no check here catches that.
+
+A review on 2026-11-24 gave `ask` inputs that the tests did not hold, on the recorded
+chain fixture, and found three faults. All three are fixed. A query that walked
+`exposes` with no target type and then `assumes` printed "no rows" and no warning, but
+no pod can take an `assumes` edge. The warning printed under a "- no rows" line; it now
+takes the place of that line. A C1 control character in the model's note or in a pod
+name reached the terminal (U+009B, which a terminal reads as ESC [); `safe()` now
+removes it. After the fixes, 317 tests pass, and the mutation run removes 240 controls:
+310 mutant-test pairs, all caught.
 
 The NetworkPolicy layout of a cluster used in the course, written by hand from the
 reference: namespace `shop` has a default-deny policy and an allow from namespaces
