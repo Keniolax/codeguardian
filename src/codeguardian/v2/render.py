@@ -1,5 +1,6 @@
 """Text output for people. Every string that came from the environment or the model goes
-through v1's safe(), which escapes Markdown and HTML and breaks links and @-mentions.
+through safe(): v1's, which escapes Markdown and HTML and breaks links and @-mentions, after
+every character that is not printable is removed, since this output goes to a terminal.
 Entity IDs are escaped too: they carry names an attacker may have chosen. Rule IDs,
 hex IDs, severities and normalised times are produced by this code and printed as they are.
 
@@ -10,7 +11,7 @@ them for the shell.
 
 import json
 
-from ..render import safe
+from ..render import safe as markdown_safe
 from . import respond
 from .schema import REFRESH_SECONDS, seconds_between
 from .correlate import all_entities, members, timeline
@@ -22,6 +23,14 @@ CHANGE_COUNTERS = {
     "model_change_superseded": "IAM change records older than a change already applied to the same policy",
     "model_change_older_than_model": "IAM change records older than the snapshot that confirmed the role",
 }
+
+
+def safe(text, limit=1500):
+    """v1's safe(), with every character that is not printable removed first, as term()
+    escapes them. Whitespace stays, and v1 folds it into single spaces. v1 removes the C0
+    controls and the bidi overrides but keeps C1 (U+0080 to U+009F) and format characters
+    such as U+200F. In ECMA-48, U+009B is CSI, the same as ESC [."""
+    return markdown_safe("".join(c for c in str(text) if c.isprintable() or c.isspace()), limit)
 
 
 def term(text, limit=500):
@@ -214,7 +223,7 @@ def answer(result):
     out = [f"Query (written by {safe(result.get('served_by') or 'no model')}, checked and run read-only):",
            safe(json.dumps(result["query"], sort_keys=True), 2000), f"Note: {safe(result.get('note', ''), 500)}", ""]
     out += [f"- {safe(r['id'], 300)}" + (f" (from {safe(r['from'], 300)})" if r["from"] != r["id"] else "")
-            for r in result["rows"]] or ["- no rows"]
+            for r in result["rows"]] or ([] if result.get("cannot_match") else ["- no rows"])
     if result["truncated"]:
         out.append("(stopped at the limit)")
     gap = result.get("cannot_match")

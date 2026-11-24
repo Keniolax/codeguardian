@@ -8,8 +8,8 @@ pytest exits with code 1 (tests failed). Exit code 2 or more means the mutant br
 collection or imports, which proves nothing, so it is reported as broken. The run fails
 if any mutant survives or breaks, if the tree is not clean afterwards, or if a test whose
 name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy or order files,
-has no mutant. In the NetworkPolicy and order files every parametrized case must also have a
-mutant of its own.
+has no mutant, or any test in the ask file after the three named in ASK_BEFORE_2C. In the
+NetworkPolicy and order files every parametrized case must also have a mutant of its own.
 
 The reviewer's week 17 mutants live in tests/mutants_week17.py, which is frozen with the
 reviewer; this file runs them after its own.
@@ -255,7 +255,7 @@ MUTANTS = [
      '        f"      {QUARANTINE_LABEL}: \\"true\\"\\n"', '        f"      app: {pod}\\n"',
      [T("test_f_plan_is_a_catalog_dry_run_with_exact_text")]),
     ("renderer does not escape", V2 + "render.py",
-     "from ..render import safe\n", "def safe(text, limit=1500):\n    return str(text)[:limit]\n",
+     "from ..render import safe as markdown_safe\n", "def markdown_safe(text, limit=1500):\n    return str(text)[:limit]\n",
      [T("test_f_rendered_output_escapes_planted_and_model_text"),
       T("test_policy_names_and_selector_text_cannot_change_a_finding_or_forge_a_line", NET)]),
     ("a code path that runs a command", V2 + "respond.py",
@@ -303,14 +303,14 @@ MUTANTS = [
      '    if not rows and q["related"]:', "    if False:",
      [T("test_ask_says_when_a_query_cannot_match_so_an_empty_answer_does_not_read_as_none", ASK), T("test_ask_note_from_the_model_cannot_forge_a_row_or_hide_the_warning", ASK)]),
     ("cannot-match check ignores the entity types", V2 + "ask.py",
-     '            if (at is None or a["type"] == at) and (to is None or b["type"] == to):', "            if True:",
+     '            if a["type"] in at and (to is None or b["type"] == to):', "            if True:",
      [T("test_ask_says_when_a_query_cannot_match_so_an_empty_answer_does_not_read_as_none", ASK)]),
     ("cannot-match check walks every edge out", V2 + "ask.py",
      '        near, far = ("src", "dst") if s["dir"] == "out" else ("dst", "src")',
      '        near, far = ("src", "dst")',
      [T("test_ask_empty_answer_from_a_filter_has_no_warning[typed]", ASK), T("test_ask_empty_answer_from_a_filter_has_no_warning[any-type]", ASK)]),
     ("walk after a step with no type requires a type", V2 + "ask.py",
-     '(at is None or a["type"] == at)', 'a["type"] == at',
+     "        at = reached\n", "        at = {to}\n",
      [T("test_ask_empty_answer_from_a_filter_has_no_warning[after-any-type]", ASK)]),
     ("edge to an entity not in the model counted", V2 + "ask.py",
      "            if a is None or b is None:\n                continue\n", "",
@@ -319,7 +319,7 @@ MUTANTS = [
      '(to is None or b["type"] == to)', 'b["type"] == to',
      [T("test_ask_empty_answer_from_a_filter_has_no_warning[any-type]", ASK)]),
     ("cannot-match check stays on the find type", V2 + "ask.py",
-     "        at = to\n", "        pass\n",
+     "        at = reached\n", "        pass\n",
      [T("test_ask_names_the_step_that_cannot_match_in_a_longer_walk", ASK)]),
     ("cannot-match warning not printed", V2 + "render.py",
      '    if gap:\n        joins = gap["joins"]', '    if False:\n        joins = gap["joins"]',
@@ -338,6 +338,37 @@ MUTANTS = [
     ("model note printed unescaped", V2 + "render.py",
      "f\"Note: {safe(result.get('note', ''), 500)}\"", "f\"Note: {result.get('note', '')}\"",
      [T("test_ask_note_from_the_model_cannot_forge_a_row_or_hide_the_warning", ASK)]),
+    # ask-edges review: each fault and each control with no test that the review found.
+    ("characters that are not printable reach the terminal", V2 + "render.py",
+     '    return markdown_safe("".join(c for c in str(text) if c.isprintable() or c.isspace()), limit)',
+     "    return markdown_safe(str(text), limit)",
+     [T("test_ask_note_from_the_model_cannot_forge_a_row_or_hide_the_warning", ASK)]),
+    ("no rows printed with the cannot-match warning", V2 + "render.py",
+     'or ([] if result.get("cannot_match") else ["- no rows"])', 'or ["- no rows"]',
+     [T("test_ask_says_when_a_query_cannot_match_so_an_empty_answer_does_not_read_as_none", ASK),
+      T("test_ask_after_a_step_with_no_type_checks_the_types_that_step_reaches", ASK),
+      T("test_ask_warns_when_the_filter_matches_nothing_and_a_step_cannot_match", ASK)]),
+    ("after a step with no type the walk may be at any type", V2 + "ask.py",
+     "        at = reached\n", "        at = reached if to else set(ENTITY_TYPES)\n",
+     [T("test_ask_after_a_step_with_no_type_checks_the_types_that_step_reaches", ASK)]),
+    ("warning names the find type after a step with no type", V2 + "ask.py",
+     '            here = " or ".join(sorted(at))\n', '            here = q["find"]\n',
+     [T("test_ask_after_a_step_with_no_type_checks_the_types_that_step_reaches", ASK)]),
+    ("warning names an in step against the edge direction", V2 + "ask.py",
+     '            src, dst = (here, to) if s["dir"] == "out" else (to, here)\n', "            src, dst = (here, to)\n",
+     [T("test_ask_warning_names_an_in_step_in_the_edge_direction", ASK)]),
+    ("warning drops the any-type fallback for the start of an edge", V2 + "ask.py",
+     '"from": src or "any type"', '"from": src',
+     [T("test_ask_warning_names_an_in_step_in_the_edge_direction", ASK)]),
+    ("cannot-match check skipped when the filter matched nothing", V2 + "ask.py",
+     '    if not rows and q["related"]:\n', '    if not rows and q["related"] and matches:\n',
+     [T("test_ask_warns_when_the_filter_matches_nothing_and_a_step_cannot_match", ASK)]),
+    ("edge whose start entity is not in the model counted", V2 + "ask.py",
+     "            if a is None or b is None:\n", "            if b is None:\n",
+     [T("test_ask_counts_only_live_edges_whose_two_ends_are_live", ASK)]),
+    ("deleted edges counted by the cannot-match check", V2 + "ask.py",
+     "        for e in store.edges(etype=etype):\n", "        for e in store.edges(etype=etype, include_deleted=True):\n",
+     [T("test_ask_counts_only_live_edges_whose_two_ends_are_live", ASK)]),
     ("skipped NotAction statement leaves no marker", V2 + "policy.py",
      '                markers.add(f"{where}: NotAction/NotResource not evaluated")', "                pass",
      [T("test_skipped_statement_is_a_visible_finding_not_a_silent_deny", CORE)]),
@@ -812,11 +843,17 @@ def pytest(node):
                           cwd=ROOT, env=env, capture_output=True, text=True).returncode
 
 
+# ask tests from before slice 2c, which have no mutant; every later ask test must have one.
+ASK_BEFORE_2C = {"test_ask_runs_a_valid_query_read_only", "test_ask_query_language_is_checked_without_a_model",
+                 "test_ask_limit_stops_the_answer"}
+
+
 def chain_tests():
-    """Tests that must each have a mutant: A to F in the chain file, and every export test."""
+    """Tests that must each have a mutant: A to F in the chain file, every export, NetworkPolicy
+    and order test, and every ask test since slice 2c."""
     out = []
     for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True),
-                       (NET, lambda n: True), (ORDER, lambda n: True)):
+                       (NET, lambda n: True), (ORDER, lambda n: True), (ASK, lambda n: n not in ASK_BEFORE_2C)):
         tree = ast.parse((ROOT / file).read_text())
         out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name.startswith("test_") and keep(n.name)]
@@ -874,7 +911,7 @@ def main():
         print(f"{verdict:<10} {name:<{width}}  {node}")
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
-          f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy and order tests,"
+          f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy, order and ask tests,"
           " all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")

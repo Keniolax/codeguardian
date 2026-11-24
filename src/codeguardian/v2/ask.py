@@ -118,25 +118,28 @@ def run(store, q):
 
 
 def cannot_match(store, q):
-    """The first walk step that no live edge in the model can take from the type the walk
-    is at, or None. A query with such a step finds nothing whatever the data holds."""
-    at = q["find"]
+    """The first walk step that no live edge in the model can take from the types the walk
+    is at, or None. A query with such a step finds nothing whatever the data holds. The
+    walk starts at the "find" type. After a step with no "to", it is at the types that
+    step's edges reach in the model, not at any type: a pod reached through exposes cannot
+    take an assumes edge, whatever other entities can."""
+    at = {q["find"]}
     for s in q["related"]:
         etype, to = s["edge"], s.get("to")
         near, far = ("src", "dst") if s["dir"] == "out" else ("dst", "src")
-        found = False
+        reached = set()
         for e in store.edges(etype=etype):
             a, b = store.entity(e[near]), store.entity(e[far])
             if a is None or b is None:
                 continue
-            if (at is None or a["type"] == at) and (to is None or b["type"] == to):
-                found = True
-                break
-        if not found:
-            src, dst = (at, to) if s["dir"] == "out" else (to, at)
+            if a["type"] in at and (to is None or b["type"] == to):
+                reached.add(b["type"])
+        if not reached:
+            here = " or ".join(sorted(at))
+            src, dst = (here, to) if s["dir"] == "out" else (to, here)
             return {"edge": etype, "from": src or "any type", "to": dst or "any type",
                     "joins": EDGE_MEANINGS[etype][1]}
-        at = to
+        at = reached
     return None
 
 
