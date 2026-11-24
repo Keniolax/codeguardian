@@ -59,6 +59,9 @@ def sources(store, now):
                          f" period of {REFRESH_SECONDS[name] // 3600} h.")
         else:
             lines.append(f"- source {name}: ok, last good run {s['last_success']}")
+        unread = json.loads(store.setting(f"unread:{name}") or "[]") if s is not None else []
+        if unread:
+            lines[-1] = lines[-1].rstrip(".") + f"; not evaluated: {_list(unread)}."
     return lines
 
 
@@ -220,7 +223,7 @@ def answer(result):
     gap = result.get("cannot_match")
     if gap:
         joins = gap["joins"]
-        ends = f"{safe(gap['edge'])} joins {safe(joins[0])} to {safe(joins[1])}" if joins \
+        ends = f"{safe(gap['edge'])} joins " + " or ".join(f"{safe(a)} to {safe(b)}" for a, b in joins) if joins \
             else "no collector writes this edge yet"
         out.append(f"Not an answer: the model holds no {safe(gap['edge'])} edge from {safe(gap['from'])} to"
                    f" {safe(gap['to'])} ({ends}), so this query cannot find anything. An empty answer here"

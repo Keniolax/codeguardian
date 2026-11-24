@@ -8,6 +8,7 @@ collector that stops working makes its facts stale without any write.
 """
 
 import json
+import os
 import sqlite3
 
 from .schema import ENTITY_TYPES, EDGE_TYPES, REFRESH_SECONDS, edge_id, seconds_between
@@ -74,6 +75,10 @@ INCIDENT_JSON = ("finding_ids", "entities")
 
 class Store:
     def __init__(self, path=":memory:"):
+        if str(path) != ":memory:":
+            # The model holds the same real data as the export files, so it gets their mode.
+            os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))
+            os.chmod(path, 0o600)
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")

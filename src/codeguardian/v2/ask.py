@@ -67,11 +67,17 @@ class QueryError(ValueError):
     pass
 
 
+def _either(types):
+    """Types in first-seen order, as "a or b"."""
+    return " or ".join(dict.fromkeys(types))
+
+
 def language():
     edges = {}
     for t in EDGE_TYPES:
-        means, ends = EDGE_MEANINGS[t]
-        edges[t] = {"means": means, "from": ends[0], "to": ends[1]} if ends else {"means": means}
+        means, pairs = EDGE_MEANINGS[t]
+        edges[t] = {"means": means, "from": _either(p[0] for p in pairs), "to": _either(p[1] for p in pairs)} \
+            if pairs else {"means": means}
     return json.dumps({"entity_types": {t: list(v[2]) for t, v in ENTITY_TYPES.items()},
                        "edge_types": edges, "ops": list(R.OPS), "max_limit": MAX_LIMIT}, indent=1)
 
