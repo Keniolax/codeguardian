@@ -351,6 +351,44 @@ def test_loader_refuses_a_hand_written_rule_with_a_twin_id(tmp_path):
     assert "POST-T-001" in [r["id"] for r in load_rules(tmp_path)]
 
 
+# No shipped path rule has notes, frameworks or an `eq denied` gate, so these use rules
+# written here: a test on the shipped files alone could not see these controls.
+HELD = {"attr": "ingress_from_outside", "op": "eq", "value": "denied"}
+
+
+def test_loader_refuses_path_rule_notes_that_are_not_a_list_of_strings():
+    for notes in ("x", [1], ["x", None]):
+        with pytest.raises(RuleError, match="notes must be a list of strings"):
+            validate({**_gated(GATE), "notes": notes})
+    # Control: a list of strings loads, and its twin gets it.
+    assert shadow(validate({**_gated(GATE), "notes": ["x"]}))["notes"][0] == "x"
+
+
+def test_twin_has_no_frameworks_even_when_its_rule_has_some():
+    rule = validate({**_gated(GATE), "frameworks": ["ATT&CK T0000"]})
+    assert shadow(rule)["frameworks"] == []
+    # Control: the rule itself keeps its frameworks.
+    assert rule["frameworks"] == ["ATT&CK T0000"]
+
+
+def test_twin_carries_its_rule_notes_before_its_own_two():
+    twin = shadow(validate({**_gated(GATE), "notes": ["n"]}))
+    assert twin["notes"] == ["n", *SHADOW_NOTES]
+    # Control: a rule with no notes gives a twin with only its two.
+    assert shadow(validate(_gated(GATE)))["notes"] == list(SHADOW_NOTES)
+
+
+def test_only_a_ne_denied_gate_makes_a_twin():
+    # A rule that already tests eq denied finds only held-back walks; a twin of it would be
+    # a copy of the rule under another ID.
+    assert shadow(validate(_gated(HELD))) is None
+    # Only the ne denied hop counts as the gate: this rule has one, so it gets a twin.
+    twin = shadow(validate(_gated(HELD, GATE)))
+    assert [h.get("edge_where") for h in twin["hops"]] == [None, [HELD], [HELD]]
+    # Control: the ne denied gate gives one.
+    assert shadow(validate(_gated(GATE)))["hops"][1]["edge_where"] == [HELD]
+
+
 # --- reach: one exit code per answer ----------------------------------------------------------
 
 def _course(tmp_path, capsys, name, *extra, drop_policies=False):
@@ -445,3 +483,86 @@ def test_reach_usage_errors_exit_3_not_2(tmp_path, capsys):
         assert "error:" in capsys.readouterr().err
     # Control: the same command with a port gives the answer.
     assert _reach(db, "client/client-7c4b") == 0
+
+
+# --- reach from Kubernetes facts that may not hold now ------------------------------------------
+
+LATER = "2026-11-14T10:15:00Z"
+# case -> (what happens after the course layout at 09:55, the time reach treats as now, and the
+# start of the note, in the words `findings` uses)
+NOT_CURRENT = {
+    "failed": ("truncated", NOW, "source k8s.state: FAILED at 2026-11-14T10:10:00.000000Z: "),
+    "stale": (None, "2026-11-14T11:00:00Z", "source k8s.state: STALE, last good run 2026-11-14T09:55:00.000000Z,"
+                                            " older than its refresh period of 1 h."),
+    "conflict": ("conflict", NOW, "k8s.state taken at 2026-11-14T09:55:00.000000Z: refused, another snapshot of"
+                                  " k8s.state with that time has other content"),
+}
+
+
+def _ingest_course(db, path, at):
+    return cli(["ingest", "--db", db, "--now", NOW, "--at", at, "--cluster", "course", "--k8s", str(path)])
+
+
+@pytest.mark.parametrize("case", sorted(NOT_CURRENT))
+def test_reach_from_a_failed_stale_or_conflicting_k8s_source_notes_it_and_exits_2(tmp_path, capsys, case):
+    after, now, words = NOT_CURRENT[case]
+    db = _course(tmp_path, capsys, "layout")
+    if after == "truncated":
+        (tmp_path / "truncated.json").write_text('{"items": [')
+        assert _ingest_course(db, tmp_path / "truncated.json", "2026-11-14T10:10:00Z") == 2
+    elif after == "conflict":
+        assert _ingest_course(db, SHOP_NO_POLICY, SNAPSHOT_AT) == 3
+    capsys.readouterr()
+    # The model still holds the layout: client is allowed, outsider denied. Neither may stand.
+    for src, old in (("client/client-7c4b", "allowed"), ("outsider/outsider-2f9a", "denied")):
+        code = cli(["reach", "--db", db, "--now", now, "--from", src, "--to", "shop/shop-web-5d8f", "--port", "3000"])
+        out = capsys.readouterr().out.splitlines()
+        assert code == 2, (case, src)
+        assert out[0].startswith(f"note: {words}"), (case, out)
+        assert out[1].startswith("note: the answer below is the one the last good snapshot of k8s.state gives")
+        assert out[2] == f"{old}: {src} -> shop/shop-web-5d8f on TCP 3000"
+    # Control: a good snapshot taken later gives no note and each answer's own exit code. For a
+    # conflict this also shows that one older than the snapshot the model holds is history.
+    assert _ingest_course(db, LAYOUT, LATER) == 0
+    capsys.readouterr()
+    for src, code in (("client/client-7c4b", 0), ("outsider/outsider-2f9a", 1)):
+        assert _reach(db, src) == code, (case, src)
+        out = capsys.readouterr().out
+        assert not out.startswith("note: ") and "k8s.state" not in out, (case, out)
+
+
+def test_reach_is_not_marked_by_a_conflict_of_another_source(tmp_path, capsys):
+    db = _course(tmp_path, capsys, "layout")
+    inventory = json.loads((FX / "ai/inventory.json").read_text())
+    (tmp_path / "ai-1.json").write_text(json.dumps(inventory))
+    inventory["agents"][0]["tools"].pop()
+    (tmp_path / "ai-2.json").write_text(json.dumps(inventory))
+    for name, code in (("ai-1.json", 0), ("ai-2.json", 3)):
+        assert cli(["ingest", "--db", db, "--now", NOW, "--at", SNAPSHOT_AT, "--ai", str(tmp_path / name)]) == code
+    capsys.readouterr()
+    assert "ai.inventory taken at" in render.findings(Store(db), NOW)  # refused as a conflict
+    for src, code in (("client/client-7c4b", 0), ("outsider/outsider-2f9a", 1)):
+        assert _reach(db, src) == code, src
+        assert not capsys.readouterr().out.startswith("note: "), src
+    # Control: the same second snapshot of k8s.state is noted.
+    assert _ingest_course(db, SHOP_NO_POLICY, SNAPSHOT_AT) == 3
+    capsys.readouterr()
+    assert _reach(db, "outsider/outsider-2f9a") == 2
+    assert capsys.readouterr().out.startswith("note: k8s.state taken at ")
+
+
+def test_reach_note_on_a_failed_source_cannot_forge_a_line(tmp_path, capsys):
+    db = _course(tmp_path, capsys, "layout")
+    bad = tmp_path / "bad\nallowed: client\x1b[2J\x9b.json"
+    bad.write_text('{"items": [')
+    assert _ingest_course(db, bad, "2026-11-14T10:10:00Z") == 2
+    capsys.readouterr()
+    assert _reach(db, "outsider/outsider-2f9a") == 2
+    out = capsys.readouterr().out
+    assert [line.split(":")[0] for line in out.splitlines()][:3] == ["note", "note", "denied"]
+    assert not any(c in out for c in "\x1b\x9b\r") and "\nallowed" not in out
+    # Control: the same model after a good snapshot prints the answer alone.
+    assert _ingest_course(db, LAYOUT, LATER) == 0
+    capsys.readouterr()
+    assert _reach(db, "outsider/outsider-2f9a") == 1
+    assert capsys.readouterr().out.startswith("denied: ")

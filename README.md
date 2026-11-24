@@ -252,6 +252,15 @@ option that it does not know, or a model file that it cannot open. It writes the
 to stderr. Before this change every answer exited 0, and a bad pod name exited 1, which
 reads as denied.
 
+The Kubernetes facts in the model may not hold now. The last export may have failed, the
+last good snapshot may be older than the one-hour refresh period, or a second snapshot
+with the same time may have been refused as a conflict. Then `reach` prints a note first.
+The note names the source and the reason in the words that `findings` uses. Next comes the
+answer from the last good snapshot, and `reach` exits 2, not evaluated. So a script cannot
+read an old "denied" as safe. A good snapshot taken later removes the note. A conflict
+older than the snapshot in the model does not count, and nor does a conflict of another
+source.
+
 How to run it on the fixtures. `--now` and `--at` set the clock, because the data is
 from 2026-11-14.
 

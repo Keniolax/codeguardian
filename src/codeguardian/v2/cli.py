@@ -259,7 +259,7 @@ def _reach(a):
     from .schema import entity_id
 
     try:
-        store, pipe, _ = _setup(a)
+        store, pipe, clock = _setup(a)
         ids = []
         for ref in (a.src, a.dst):
             if ref.count("/") != 1 or not all(ref.split("/")):
@@ -271,14 +271,40 @@ def _reach(a):
                 return NO_ANSWER
             ids.append(pid)
         answer, notes = pod_to_pod(store, ids[0], ids[1], a.port, a.protocol)
+        held = _k8s_not_current(store, clock.now())
     except Exception as exc:  # any failure is "no answer", never an answer
         print(f"no answer: {term(type(exc).__name__)}: {term(exc)}", file=sys.stderr)
         return NO_ANSWER
+    for line in held:
+        print(f"note: {term(line)}")
+    if held:
+        print("note: the answer below is the one the last good snapshot of k8s.state gives; it may not hold now,"
+              " so it counts as not evaluated")
     print(f"{answer}: {term(a.src)} -> {term(a.dst)} on {a.protocol} {a.port}")
     for n in notes:
         print(f"  note: {term(n)}")
     print("  this assumes the cluster's network plugin enforces NetworkPolicy; the model cannot see that")
-    return REACH_EXIT.get(answer, NO_ANSWER)
+    code = REACH_EXIT.get(answer, NO_ANSWER)
+    return REACH_EXIT["not evaluated"] if held and code != NO_ANSWER else code
+
+
+def _k8s_not_current(store, now):
+    """Why the model's Kubernetes facts may not hold now, in the words `findings` uses: the
+    source failed, is past its refresh period, or a snapshot taken at the time of the one
+    the model holds was refused as a conflict. reach then still prints the answer the last
+    good snapshot gives, but exits as not evaluated, so a script never reads an old
+    "denied" as safe. A conflict older than the snapshot the model holds is history."""
+    from .collectors.k8s import SOURCE
+    from .render import refused_line, source_status
+
+    s = store.source(SOURCE)
+    line, current = source_status(SOURCE, s, now)
+    held = [] if current else [line]
+    last = (s or {}).get("last_success") or ""
+    for r in store.snapshots(statuses=("conflict",)):
+        if r["source"] == SOURCE and r["at"] >= last:
+            held.append(refused_line(r))
+    return held
 
 
 def _ts(value):

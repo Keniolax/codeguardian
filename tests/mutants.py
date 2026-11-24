@@ -73,6 +73,14 @@ COURSE_NOT_EVAL = "test_course_layout_policy_not_evaluated_keeps_the_open_path_a
 COURSE_CLI = "test_findings_list_the_course_layout_np_finding_and_the_swap_from_the_command_line"
 EXPOSED_GATE = ('# the pods it closes.\n'
                 'edge_where = [{ attr = "ingress_from_outside", op = "ne", value = "denied" }]\n')
+NOT_CURRENT = "test_reach_from_a_failed_stale_or_conflicting_k8s_source_notes_it_and_exits_2"
+NOT_CURRENT_CASES = ("conflict", "failed", "stale")
+FORGE = "test_reach_note_on_a_failed_source_cannot_forge_a_line"
+OTHER_CONFLICT = "test_reach_is_not_marked_by_a_conflict_of_another_source"
+NOTES_TEST = "test_loader_refuses_path_rule_notes_that_are_not_a_list_of_strings"
+TWIN_FRAMEWORKS = "test_twin_has_no_frameworks_even_when_its_rule_has_some"
+TWIN_NOTES = "test_twin_carries_its_rule_notes_before_its_own_two"
+ONLY_NE = "test_only_a_ne_denied_gate_makes_a_twin"
 EVERY_ORDER = "test_every_order_of_two_snapshots_and_four_change_records_ends_the_same"
 OLDER = "test_snapshot_older_than_the_last_applied_is_refused_and_changes_nothing"
 PER_SOURCE = "test_refusal_is_per_collector"
@@ -319,14 +327,14 @@ MUTANTS = [
     ("skipped NotAction statement leaves no marker", V2 + "policy.py",
      '                markers.add(f"{where}: NotAction/NotResource not evaluated")', "                pass",
      [T("test_skipped_statement_is_a_visible_finding_not_a_silent_deny", CORE)]),
-    ("source that never ran is not listed", V2 + "render.py",
-     '        if s is None:\n            lines.append(f"- source {name}: NEVER RUN.',
-     '        if s is None:\n            continue\n            lines.append(f"- source {name}: NEVER RUN.',
+    ("source that never ran shown as ok", V2 + "render.py",
+     '    if s is None:\n        return f"source {name}: NEVER RUN.',
+     '    if s is None:\n        return f"source {name}: ok", True\n        return f"source {name}: NEVER RUN.',
      [T("test_first_run_failure_reports_failed_not_empty", CORE)]),
     ("source past its refresh period shown as ok", V2 + "render.py",
-     '        elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:',
-     '        elif False:',
-     [T("test_source_past_its_refresh_period_is_shown_stale", CORE)]),
+     '    elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:',
+     '    elif False:',
+     [T("test_source_past_its_refresh_period_is_shown_stale", CORE), T(f"{NOT_CURRENT}[stale]", SHADOW)]),
     # Export: read-only, and missing knowledge is not safe.
     ("export runs commands that are not on the read-only list", EXPORT,
      "    if not allowed(argv):", "    if False:",
@@ -715,7 +723,7 @@ MUTANTS = [
      '                if r["id"] in seen:\n                    raise', "                if False:\n                    raise",
      [T("test_loader_refuses_a_hand_written_rule_with_a_twin_id", SHADOW)]),
     # reach: one exit code per answer, and none that a failure could share.
-    ("reach exits 0 for every answer", CLI, "    return REACH_EXIT.get(answer, NO_ANSWER)", "    return 0",
+    ("reach exits 0 for every answer", CLI, "    code = REACH_EXIT.get(answer, NO_ANSWER)", "    code = 0",
      [T("test_reach_exits_0_for_allowed", SHADOW), T("test_reach_exits_1_for_denied", SHADOW),
       T("test_reach_exits_2_for_not_evaluated", SHADOW)]),
     ("allowed exits as denied", CLI, '{"allowed": 0,', '{"allowed": 1,', [T("test_reach_exits_0_for_allowed", SHADOW)]),
@@ -728,6 +736,44 @@ MUTANTS = [
     ("reach lets an error escape, which exits 1 (denied)", CLI,
      '    except Exception as exc:  # any failure is "no answer", never an answer',
      "    except ZeroDivisionError as exc:", [T("test_reach_exits_3_when_the_model_cannot_be_read", SHADOW)]),
+    # reach from Kubernetes facts that may not hold now (review of 2026-11-24, fix 1).
+    ("reach ignores a failed, stale or conflicting k8s source", CLI, "        held = _k8s_not_current(store, clock.now())",
+     "        held = []", [T(f"{NOT_CURRENT}[{c}]", SHADOW) for c in NOT_CURRENT_CASES] + [T(FORGE, SHADOW),
+                                                                                     T(OTHER_CONFLICT, SHADOW)]),
+    ("reach notes the source but keeps the answer's exit code", CLI,
+     '    return REACH_EXIT["not evaluated"] if held and code != NO_ANSWER else code', "    return code",
+     [T(f"{NOT_CURRENT}[{c}]", SHADOW) for c in NOT_CURRENT_CASES] + [T(FORGE, SHADOW), T(OTHER_CONFLICT, SHADOW)]),
+    ("a failed source reads as current", V2 + "render.py", '    elif s["status"] != "ok":', "    elif False:",
+     [T(f"{NOT_CURRENT}[failed]", SHADOW), T(FORGE, SHADOW)]),
+    ("a conflict at the time of the model's snapshot not noted", CLI,
+     '        if r["source"] == SOURCE and r["at"] >= last:', "        if False:",
+     [T(f"{NOT_CURRENT}[conflict]", SHADOW), T(OTHER_CONFLICT, SHADOW)]),
+    ("a conflict older than the model's snapshot still noted", CLI,
+     '        if r["source"] == SOURCE and r["at"] >= last:', '        if r["source"] == SOURCE:',
+     [T(f"{NOT_CURRENT}[conflict]", SHADOW)]),
+    ("a conflict of another source noted for k8s", CLI,
+     '        if r["source"] == SOURCE and r["at"] >= last:', '        if r["at"] >= last:',
+     [T(OTHER_CONFLICT, SHADOW)]),
+    ("reach's source note not escaped for the terminal", CLI, '        print(f"note: {term(line)}")',
+     '        print(f"note: {line}")', [T(FORGE, SHADOW)]),
+    # The -NP loader on rules written in the test (review of 2026-11-23, R1 to R6; fixes 3 to 6).
+    ("path rule notes not checked (R1)", RULES,
+     '        _need(isinstance(rule.get("notes", []), list) and all(isinstance(n, str) for n in rule.get("notes", [])),\n'
+     '              rule, "notes must be a list of strings")\n', "", [T(NOTES_TEST, SHADOW)]),
+    ("path rule notes not checked as a list", RULES, '_need(isinstance(rule.get("notes", []), list) and all(',
+     "_need(all(", [T(NOTES_TEST, SHADOW)]),
+    ("path rule notes not checked as strings", RULES, 'all(isinstance(n, str) for n in rule.get("notes", []))',
+     "True", [T(NOTES_TEST, SHADOW)]),
+    ("twin keeps its rule's frameworks (R3)", RULES, '"frameworks": [], "start": rule["start"],',
+     '"frameworks": rule["frameworks"], "start": rule["start"],', [T(TWIN_FRAMEWORKS, SHADOW)]),
+    ("twin drops its rule's own notes (R4)", RULES, '"notes": [*rule.get("notes", []), *SHADOW_NOTES],',
+     '"notes": [*SHADOW_NOTES],', [T(TWIN_NOTES, SHADOW), T(NOTES_TEST, SHADOW)]),
+    ("twin puts its rule's notes after its own", RULES, '"notes": [*rule.get("notes", []), *SHADOW_NOTES],',
+     '"notes": [*SHADOW_NOTES, *rule.get("notes", [])],', [T(TWIN_NOTES, SHADOW)]),
+    ("an eq denied gate also gives a twin (R6)", RULES,
+     '    gated = [n for n, h in enumerate(rule["hops"]) if GATE in h.get("edge_where", [])]',
+     '    gated = [n for n, h in enumerate(rule["hops"]) if GATE in h.get("edge_where", [])'
+     ' or HELD_BACK in h.get("edge_where", [])]', [T(ONLY_NE, SHADOW)]),
     # Order (slice snapshot-order): each guard that keeps arrival order out of the model.
     ("snapshot older than the last applied one accepted", PL, "        elif last is not None and at < last:",
      "        elif False:", [T(OLDER, ORDER), T(PER_SOURCE, ORDER), T(EVERY_ORDER, ORDER)]),

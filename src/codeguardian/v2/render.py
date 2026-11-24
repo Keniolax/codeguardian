@@ -43,22 +43,28 @@ def _list(values, limit=400):
     return ", ".join(safe(v, limit) for v in values) or "none"
 
 
+def source_status(name, s, now):
+    """The words `sources` prints for one collector (s is its row, or None), and whether
+    results that depend on it hold now. They do not when it never ran, its last run
+    failed, or its last good run is older than its refresh period."""
+    if s is None:
+        return f"source {name}: NEVER RUN. Nothing from it is in the model; findings do not cover it.", False
+    elif s["status"] != "ok":
+        return (f"source {name}: FAILED at {s['last_attempt']}: {safe(s['error'] or '')}."
+                " Its facts are stale; results that depend on it are incomplete."), False
+    elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:
+        return (f"source {name}: STALE, last good run {s['last_success']}, older than its refresh"
+                f" period of {REFRESH_SECONDS[name] // 3600} h."), False
+    return f"source {name}: ok, last good run {s['last_success']}", True
+
+
 def sources(store, now):
     """Every collector, including one that never ran or has not run lately: a source
     with no recent good run means the findings do not cover it."""
     lines = []
     for name in COLLECTORS:
         s = store.source(name)
-        if s is None:
-            lines.append(f"- source {name}: NEVER RUN. Nothing from it is in the model; findings do not cover it.")
-        elif s["status"] != "ok":
-            lines.append(f"- source {name}: FAILED at {s['last_attempt']}: {safe(s['error'] or '')}."
-                         " Its facts are stale; results that depend on it are incomplete.")
-        elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:
-            lines.append(f"- source {name}: STALE, last good run {s['last_success']}, older than its refresh"
-                         f" period of {REFRESH_SECONDS[name] // 3600} h.")
-        else:
-            lines.append(f"- source {name}: ok, last good run {s['last_success']}")
+        lines.append("- " + source_status(name, s, now)[0])
     return lines
 
 
@@ -78,15 +84,14 @@ def finding_lines(f):
 def refused_snapshots(store):
     """Snapshots the model did not apply. An older one is kept for the history only; two
     different ones at one time mean the model may not match what held then."""
-    lines = []
-    for s in store.snapshots(statuses=("older", "conflict")):
-        if s["status"] == "older":
-            lines.append(f"- {s['source']} taken at {s['at']}: refused, older than the last applied snapshot;"
-                         " used for the history only")
-        else:
-            lines.append(f"- {s['source']} taken at {s['at']}: refused, another snapshot of {s['source']} with that"
-                         " time has other content; which one held is not known (not evaluated)")
-    return lines
+    return ["- " + refused_line(s) for s in store.snapshots(statuses=("older", "conflict"))]
+
+
+def refused_line(s):
+    if s["status"] == "older":
+        return f"{s['source']} taken at {s['at']}: refused, older than the last applied snapshot; used for the history only"
+    return (f"{s['source']} taken at {s['at']}: refused, another snapshot of {s['source']} with that"
+            " time has other content; which one held is not known (not evaluated)")
 
 
 def findings(store, now, status=None, history=None):
