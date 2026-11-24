@@ -204,11 +204,15 @@ def again(tmp_path, pipe, edit, at=LATER, buckets=None):
 
 def test_user_finding_names_what_the_resolver_could_not_read(tmp_path):
     hostile = "ghost\n- [open] critical FORGED-001 v1: x"
+    gone = f"arn:aws:iam::{ACCT}:policy/gone"
     store, _ = build(tmp_path, edit_iam=with_iam(users=[
         user("dave", groups=["ghost"]), user("frank", inline={"read-kb": READ_KB}, PermissionsBoundary=BOUNDARY),
-        user("mallory", groups=[hostile]), user("kb-reader", inline={"read-kb": READ_KB})]))
+        user("gina", groups=["partial"]), user("mallory", groups=[hostile]),
+        user("kb-reader", inline={"read-kb": READ_KB})], groups=[group("partial", attached=[gone])]))
     notes = {(f["rule_id"], f["primary_entity"]): f["notes"] for f in store.findings(status="open")}
     assert notes[("POST-IAM-005", uid("dave"))] == ["policy documents not in the model: group:ghost"]
+    # A managed policy of a group that the model does not hold is unknown, not empty.
+    assert notes[("POST-IAM-005", uid("gina"))] == [f"policy documents not in the model: group:partial:{gone}"]
     assert "permissions boundary not evaluated" in notes[("POST-IAM-006", uid("frank"))]
     # Control: a user whose policies were all read raises neither finding.
     assert [k for k in notes if k[1] == uid("kb-reader")] == []
