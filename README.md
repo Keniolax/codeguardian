@@ -199,7 +199,11 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   resource opens `POST-IAM-004`. A user in a group the model does not hold, or with a
   permissions boundary, is marked as not fully known. Access keys and their age are not
   in this export, so the source line says they were not read. Changes to users apply at
-  the next snapshot; CloudTrail records about users are not read.
+  the next snapshot; CloudTrail records about users are not read. A user's finding names
+  the documents and statements the resolver could not read, as a role's finding does.
+- The collector refuses an IAM export that is one page of a longer listing, lists one ARN
+  twice, gives two inline policies one name, or holds a policy entry that is not an
+  object. The source then shows as failed, and the model keeps its last good snapshot.
 
 Kubernetes NetworkPolicy is evaluated as the Kubernetes reference defines it. For each pod
 that a Service selects, the collector asks one question: can a connection from outside
@@ -411,6 +415,11 @@ Measured on 2026-11-17 at commit `691bfdd`, for the ordering of snapshots and re
 - After the review fixes at `f84e86f`: 222 tests pass (22 for ordering). The mutation
   run removes 210 controls: 272 mutant-test pairs, all fail without their control.
 
+Measured on 2026-11-24 at commit `acbe499`, after the review of IAM users: 334 tests pass
+(107 for v1, 227 for v2, of which 21 are for IAM users). The mutation run removes 276
+controls one at a time: 348 mutant-test pairs, all fail without their control. The user
+tests read hand-written exports for the documentation account `111122223333`.
+
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
 chain fixture now also lists its 4 namespaces), and the noise
 copies the chain's own record shapes, so these numbers do not predict speed on a real
@@ -463,6 +472,11 @@ What was learned:
   administrator. The source line now names each part of the export the model does not
   read. AWS also leaves out a user's policy list when it is empty, which no hand-written
   fixture did; a strict check would have refused the real export.
+- A file that lists one thing twice must be refused, not read twice. The collector kept
+  the last of two entries with one ARN, and the last of two inline policies with one
+  name. A user listed first with `AdministratorAccess` and again without it read as a
+  plain user. A review found this, and found that one page of a paginated export read as
+  the whole account.
 - A hand-written model answer tests the code around the model, not the prompt. The
   recorded `ask` answer used the right edge. A live model given only edge names chose a
   wrong one every time, and "no rows" read as "none". Telling the model what each edge
