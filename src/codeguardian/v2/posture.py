@@ -3,6 +3,8 @@
 from . import rules as R
 from .schema import finding_id
 
+PRINCIPALS = ("iam_role", "iam_user")
+
 
 def evaluate(store, rule, ent, now):
     """Returns the finding this entity raises under the rule, or None."""
@@ -11,8 +13,9 @@ def evaluate(store, rule, ent, now):
     if not all(R.check(c, ent["attrs"]) for c in rule["where"]):
         return None
     notes = [f"stale: {ent['id']} not confirmed recently"] if store.is_stale(ent, now) else []
-    notes += ent["attrs"].get("not_evaluated", []) if ent["type"] == "iam_role" else []
-    unknown = ent["attrs"].get("unknown_policy_documents") if ent["type"] == "iam_role" else None
+    # A role's or user's finding says what the resolver could not read, not only that it could not.
+    notes += ent["attrs"].get("not_evaluated", []) if ent["type"] in PRINCIPALS else []
+    unknown = ent["attrs"].get("unknown_policy_documents") if ent["type"] in PRINCIPALS else None
     if unknown:
         notes.append("policy documents not in the model: " + ", ".join(unknown))
     return {

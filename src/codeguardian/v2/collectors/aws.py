@@ -44,30 +44,58 @@ def decode_document(doc):
     return None
 
 
+def _check_entry(key, e, pol_key, arns):
+    """The parts of one role, user or group entry that apply reads. An entry listed twice,
+    or two inline policies of one name, would read as one, so the last would hide the
+    first; a policy entry or boundary that is not an object would stop the collector
+    half-way. Each refuses the snapshot instead."""
+    arn = e["Arn"]
+    need(arn not in arns, "aws iam", f"{key} lists {arn!r} twice")
+    arns.add(arn)
+    names = [p.get("PolicyName") if isinstance(p, dict) else None for p in e.get(pol_key) or []]
+    need(all(isinstance(n, str) for n in names), "aws iam",
+         f"{arn!r}: an entry of {pol_key} is not an object with a PolicyName")
+    need(len(set(names)) == len(names), "aws iam", f"{arn!r}: two entries of {pol_key} have one PolicyName")
+    need(all(isinstance(p, dict) and isinstance(p.get("PolicyArn"), str) for p in e.get("AttachedManagedPolicies") or []),
+         "aws iam", f"{arn!r}: an entry of AttachedManagedPolicies is not an object with a PolicyArn")
+    need(isinstance(e.get("PermissionsBoundary") or {}, dict), "aws iam", f"{arn!r}: PermissionsBoundary is not an object")
+
+
 def load(iam_path, buckets_path, tags_path):
     iam = read_json(iam_path, "aws iam")
     need(isinstance(iam, dict) and isinstance(iam.get("RoleDetailList"), list)
          and isinstance(iam.get("Policies"), list), "aws iam",
          "expected get-account-authorization-details output with RoleDetailList and Policies")
+    # One page of a longer listing would read as the whole account, and the sweep would
+    # delete what is on the other pages.
+    need(not any(iam.get(k) for k in ("IsTruncated", "Marker", "NextToken")), "aws iam",
+         "the export is one page of a longer listing (IsTruncated, Marker or NextToken); export every page")
+    roles = set()
     for r in iam["RoleDetailList"]:
         need(isinstance(r, dict) and isinstance(r.get("RoleName"), str) and isinstance(r.get("Arn"), str)
              and isinstance(r.get("RolePolicyList"), list) and isinstance(r.get("AttachedManagedPolicies"), list),
              "aws iam", "a role entry lacks RoleName, Arn, RolePolicyList or AttachedManagedPolicies")
+        _check_entry("RoleDetailList", r, "RolePolicyList", roles)
+    policies = set()
     for p in iam["Policies"]:
         need(isinstance(p, dict) and isinstance(p.get("Arn"), str) and isinstance(p.get("PolicyVersionList"), list),
              "aws iam", "a policy entry lacks Arn or PolicyVersionList")
+        need(p["Arn"] not in policies, "aws iam", f"Policies lists {p['Arn']!r} twice")
+        policies.add(p["Arn"])
     # AWS leaves out a user's or group's policy list when it is empty.
     for key, name_key, pol_key in (("UserDetailList", "UserName", "UserPolicyList"),
                                    ("GroupDetailList", "GroupName", "GroupPolicyList")):
         if key not in iam:
             continue
         need(isinstance(iam[key], list), "aws iam", f"{key} is not a list")
+        arns = set()
         for e in iam[key]:
             need(isinstance(e, dict) and isinstance(e.get(name_key), str) and isinstance(e.get("Arn"), str)
                  and isinstance(e.get(pol_key, []), list) and isinstance(e.get("AttachedManagedPolicies", []), list)
                  and isinstance(e.get("GroupList", []), list)
                  and all(isinstance(g, str) for g in e.get("GroupList", [])),
                  "aws iam", f"an entry of {key} lacks {name_key} or Arn, or a policy or group list is not a list")
+            _check_entry(key, e, pol_key, arns)
     buckets = read_json(buckets_path, "aws s3")
     need(isinstance(buckets, dict) and isinstance(buckets.get("Buckets"), list), "aws s3",
          "expected list-buckets output with Buckets")
