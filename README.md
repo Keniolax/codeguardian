@@ -415,9 +415,9 @@ Measured on 2026-11-17 at commit `691bfdd`, for the ordering of snapshots and re
 - After the review fixes at `f84e86f`: 222 tests pass (22 for ordering). The mutation
   run removes 210 controls: 272 mutant-test pairs, all fail without their control.
 
-Measured on 2026-11-24 at commit `acbe499`, after the review of IAM users: 334 tests pass
-(107 for v1, 227 for v2, of which 21 are for IAM users). The mutation run removes 276
-controls one at a time: 348 mutant-test pairs, all fail without their control. The user
+Measured on 2026-11-24 at commit `7088102`, after the review of IAM users: 334 tests pass
+(107 for v1, 227 for v2, of which 21 are for IAM users). The mutation run removes 277
+controls one at a time: 349 mutant-test pairs, all fail without their control. The user
 tests read hand-written exports for the documentation account `111122223333`.
 
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
