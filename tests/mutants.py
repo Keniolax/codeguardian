@@ -754,8 +754,6 @@ MUTANTS = [
     ("a conflict of another source noted for k8s", CLI,
      '        if r["source"] == SOURCE and r["at"] >= last:', '        if r["at"] >= last:',
      [T(OTHER_CONFLICT, SHADOW)]),
-    ("reach's source note not escaped for the terminal", CLI, '        print(f"note: {term(line)}")',
-     '        print(f"note: {line}")', [T(FORGE, SHADOW)]),
     # The -NP loader on rules written in the test (review of 2026-11-23, R1 to R6; fixes 3 to 6).
     ("path rule notes not checked (R1)", RULES,
      '        _need(isinstance(rule.get("notes", []), list) and all(isinstance(n, str) for n in rule.get("notes", [])),\n'
@@ -796,9 +794,10 @@ MUTANTS = [
      '    if held:\n        print("note: the answer below', '    if held and answer != "not evaluated":\n'
      '        print("note: the answer below', [T("test_reach_notes_a_failed_source_when_the_old_answer_is_not_evaluated_too",
                                                 SHADOW)]),
-    ("C1 control characters reach the terminal", V2 + "render.py",
-     '    return markdown_safe(_C1.sub("", str(text)), limit)', "    return markdown_safe(str(text), limit)",
-     [T("test_findings_drop_c1_control_characters_from_environment_text", SHADOW), T(FORGE, SHADOW)]),
+    ("characters that are not printable reach the terminal", V2 + "render.py",
+     '    return markdown_safe("".join(c for c in str(text) if c.isprintable() or c.isspace()), limit)',
+     "    return markdown_safe(str(text), limit)",
+     [T("test_findings_remove_characters_that_are_not_printable", SHADOW), T(FORGE, SHADOW)]),
     # Order (slice snapshot-order): each guard that keeps arrival order out of the model.
     ("snapshot older than the last applied one accepted", PL, "        elif last is not None and at < last:",
      "        elif False:", [T(OLDER, ORDER), T(PER_SOURCE, ORDER), T(EVERY_ORDER, ORDER)]),

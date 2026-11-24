@@ -570,17 +570,17 @@ def test_reach_is_not_marked_by_a_conflict_of_another_source(tmp_path, capsys):
 
 def test_reach_note_on_a_failed_source_cannot_forge_a_line(tmp_path, capsys):
     db = _course(tmp_path, capsys, "layout")
-    bad = tmp_path / "bad\nallowed: client\x1b[2J\x9b.json"
+    bad = tmp_path / "bad\nallowed: client\x1b[2J\x9b\u200f.json"
     bad.write_text('{"items": [')
     assert _ingest_course(db, bad, "2026-11-14T10:10:00Z") == 2
     capsys.readouterr()
     assert _reach(db, "outsider/outsider-2f9a") == 2
     out = capsys.readouterr().out
     assert [line.split(":")[0] for line in out.splitlines()][:3] == ["note", "note", "denied"]
-    assert not any(c in out for c in "\x1b\x9b\r") and "\nallowed" not in out
+    assert not any(c in out for c in "\x1b\x9b\r\u200f") and "\nallowed" not in out
     # findings names the same failure on one line of its own.
     listed = render.findings(Store(db), NOW)
-    assert not any(c in listed for c in "\x1b\x9b\r") and "\nallowed" not in listed
+    assert not any(c in listed for c in "\x1b\x9b\r\u200f") and "\nallowed" not in listed
     assert len([line for line in listed.splitlines() if line.startswith("- source k8s.state: FAILED")]) == 1
     # Control: the same model after a good snapshot prints the answer alone.
     assert _ingest_course(db, LAYOUT, LATER) == 0
@@ -631,13 +631,15 @@ def test_reach_escapes_the_pod_names_it_prints(tmp_path, capsys):
     assert capsys.readouterr().out.startswith("denied: outsider/outsider-2f9a -> shop/shop-web-5d8f on TCP 3000\n")
 
 
-def test_findings_drop_c1_control_characters_from_environment_text(tmp_path, capsys):
-    # v1's safe() keeps U+0080 to U+009F; U+009B is CSI, which a terminal may obey as ESC [.
-    name = "p\x9b31m\x9bq-\x85x"
+def test_findings_remove_characters_that_are_not_printable(tmp_path, capsys):
+    # v1's safe() keeps C1 (U+0080 to U+009F; U+009B is CSI, as ESC [ is) and format
+    # characters such as the right-to-left mark U+200F.
+    name = "p\x9b31m\x9bq-\x85\u200f\u2060\ufeffx"
     hostile = allow(name, EVERY, {"matchExpressions": [{"key": "app", "operator": "Gt", "values": ["1"]}]}, ns="shop")
     db = _course(tmp_path, capsys, "c1", hostile)
     store = Store(db)
     for out in (render.findings(store, NOW), render.findings(store, NOW, history=[])):
-        assert not any(chr(c) in out for c in range(0x80, 0xa0)), out
-        # Control: the printable part of the name still shows, in the open path's note.
-        assert "NetworkPolicy shop/p31mq\\-x" in out
+        assert all(c.isprintable() or c == "\n" for c in out.replace("@\u200b", "@")), out
+        # Control: the printable part of the name still shows, in the open path's note. NEL
+        # (U+0085) is whitespace, so it folds into a space, as a newline does.
+        assert "NetworkPolicy shop/p31mq\\- x" in out

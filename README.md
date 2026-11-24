@@ -513,9 +513,10 @@ What was learned:
   from a model whose last Kubernetes export had failed. Now it names the source and exits
   2.
 - Escaping for one output does not cover another. v1's `safe()` escapes text for a GitHub
-  comment. It removes the C0 control characters but keeps C1 (U+0080 to U+009F). In
-  ECMA-48, U+009B is CSI, the same as ESC [. `findings` printed U+009B raw from a policy
-  name. Version 2's text output now removes C1 too.
+  comment. It removes the C0 control characters but keeps C1 (U+0080 to U+009F) and
+  format characters such as U+200F. In ECMA-48, U+009B is CSI, the same as ESC [.
+  `findings` printed U+009B raw from a policy name. Version 2's text output now removes
+  every character that is not printable, the same set that `reach` escapes.
 - An older snapshot must be refused, or it overwrites newer facts. But it still says
   what held at its own time, so the history has to keep it. With refused snapshots left
   out of the replay, two arrival orders of the same inputs give two histories; the
