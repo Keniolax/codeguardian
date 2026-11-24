@@ -449,6 +449,10 @@ holds slices 1 and 2, except the M1 speed, which was measured at `dd2dff1`:
   3,215 to 3,297 on `main` at `53851b8`, which has neither (p50 0.20 ms, p95 0.76 to
   0.78 ms). The chain incident held eight rules on this branch and seven on `main`, and
   the path finding ended resolved on both.
+- After the review fixes of 2026-11-24 at `4201b67`, in a cloud container (x86_64 Linux,
+  Python 3.12.3): 343 tests pass (107 for v1, 236 for v2; 38 are for paths that only a
+  policy closes and for `reach`). The mutation run removes 266 controls one at a time:
+  394 mutant-test pairs, 215 distinct test cases, all fail without their control.
 
 Measured on 2026-11-17 at commit `691bfdd`, for the ordering of snapshots and records:
 
