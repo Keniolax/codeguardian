@@ -327,6 +327,9 @@ def test_loader_refuses_a_networkpolicy_test_that_could_read_not_evaluated_as_cl
            "ne-not-evaluated": {"op": "ne", "value": "not evaluated"}, "nonempty": {"op": "nonempty"}}[form]
     with pytest.raises(RuleError, match="may be tested only as ne denied or eq denied"):
         validate(_gated({"attr": "ingress_from_outside", **bad}))
+    # On every hop that tests it, not only the first: here the second, walked into a Service.
+    with pytest.raises(RuleError, match="may be tested only as ne denied or eq denied"):
+        validate(_gated(None, {"attr": "ingress_from_outside", **bad}))
     # Control: the two forms that keep "not evaluated" open.
     validate(_gated(GATE))
     validate(_gated({"attr": "ingress_from_outside", "op": "eq", "value": "denied"}))
@@ -376,6 +379,16 @@ def test_twin_carries_its_rule_notes_before_its_own_two():
     assert twin["notes"] == ["n", *SHADOW_NOTES]
     # Control: a rule with no notes gives a twin with only its two.
     assert shadow(validate(_gated(GATE)))["notes"] == list(SHADOW_NOTES)
+
+
+def test_twin_starts_where_its_rule_starts():
+    rule = validate({**_gated(GATE), "start": "service", "hops": [{"edge": "exposes", "dir": "out", "to": "pod",
+                                                                    "edge_where": [GATE]}]})
+    twin = shadow(rule)
+    assert (twin["start"], twin["hops"]) == ("service", [{"edge": "exposes", "dir": "out", "to": "pod",
+                                                          "edge_where": [HELD]}])
+    # Control: a rule that starts at the internet gives a twin that starts there too.
+    assert shadow(validate(_gated(GATE)))["start"] == "internet"
 
 
 def test_only_a_ne_denied_gate_makes_a_twin():
@@ -476,11 +489,15 @@ def test_reach_exits_3_when_the_model_cannot_be_read(tmp_path, capsys):
 def test_reach_usage_errors_exit_3_not_2(tmp_path, capsys):
     db = _course(tmp_path, capsys, "layout")
     capsys.readouterr()
-    for args in (["--port", "abc"], ["--port", "3000", "--protocol", "ICMP"], [], ["--port", "3000", "--bogus"]):
+    for args in (["--port", "abc"], ["--port", "3000", "--protocol", "ICMP"], [], ["--port", "3000", "--bogus"],
+                 ["--port", "3000", "--bo\x1b[2Jgus\nallowed: x"]):
         with pytest.raises(SystemExit) as exc:
             cli(["reach", "--db", db, "--now", NOW, "--from", "client/client-7c4b", "--to", "shop/shop-web-5d8f", *args])
         assert exc.value.code == 3, args
-        assert "error:" in capsys.readouterr().err
+        out = capsys.readouterr()
+        # The answer channel stays empty, and the option's text cannot forge a line.
+        assert out.out == "" and "error:" in out.err, args
+        assert "\x1b" not in out.err and "\nallowed" not in out.err, args
     # Control: the same command with a port gives the answer.
     assert _reach(db, "client/client-7c4b") == 0
 
@@ -561,8 +578,66 @@ def test_reach_note_on_a_failed_source_cannot_forge_a_line(tmp_path, capsys):
     out = capsys.readouterr().out
     assert [line.split(":")[0] for line in out.splitlines()][:3] == ["note", "note", "denied"]
     assert not any(c in out for c in "\x1b\x9b\r") and "\nallowed" not in out
+    # findings names the same failure on one line of its own.
+    listed = render.findings(Store(db), NOW)
+    assert not any(c in listed for c in "\x1b\x9b\r") and "\nallowed" not in listed
+    assert len([line for line in listed.splitlines() if line.startswith("- source k8s.state: FAILED")]) == 1
     # Control: the same model after a good snapshot prints the answer alone.
     assert _ingest_course(db, LAYOUT, LATER) == 0
     capsys.readouterr()
     assert _reach(db, "outsider/outsider-2f9a") == 1
     assert capsys.readouterr().out.startswith("denied: ")
+
+
+def test_reach_counts_a_snapshot_exactly_one_refresh_period_old_as_current(tmp_path, capsys):
+    # One rule for the tie, as for stale facts: at exactly 1 h the snapshot is still current.
+    db = _course(tmp_path, capsys, "layout")
+    args = ["reach", "--db", db, "--from", "outsider/outsider-2f9a", "--to", "shop/shop-web-5d8f", "--port", "3000"]
+    assert cli([*args, "--now", "2026-11-14T10:55:00Z"]) == 1
+    assert capsys.readouterr().out.startswith("denied: ")
+    # Control: one microsecond later it is stale.
+    assert cli([*args, "--now", "2026-11-14T10:55:00.000001Z"]) == 2
+    assert capsys.readouterr().out.startswith("note: source k8s.state: STALE, ")
+
+
+def test_reach_notes_a_failed_source_when_the_old_answer_is_not_evaluated_too(tmp_path, capsys):
+    unknown = allow("unknown", EVERY, {"matchExpressions": [{"key": "app", "operator": "Gt", "values": ["1"]}]},
+                    ns="shop")
+    db = _course(tmp_path, capsys, "unknown", unknown)
+    # Control: before the failure the answer is not evaluated, with no note on the source.
+    assert _reach(db, "outsider/outsider-2f9a") == 2
+    assert capsys.readouterr().out.startswith("not evaluated: ")
+    (tmp_path / "truncated.json").write_text('{"items": [')
+    assert _ingest_course(db, tmp_path / "truncated.json", "2026-11-14T10:10:00Z") == 2
+    capsys.readouterr()
+    assert _reach(db, "outsider/outsider-2f9a") == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("note: source k8s.state: FAILED at 2026-11-14T10:10:00.000000Z")
+    assert out[2].startswith("not evaluated: outsider/outsider-2f9a -> ")
+
+
+def test_reach_escapes_the_pod_names_it_prints(tmp_path, capsys):
+    evil = "ev\x1b[2Jil\nallowed: x"
+    data = json.loads(LAYOUT.read_text())
+    pod = copy.deepcopy(k8s_item(data, "Pod", "outsider-2f9a"))
+    pod["metadata"].update(name=evil, uid="00000000-0000-4000-8000-0000000000ee")
+    db = _course(tmp_path, capsys, "evil", pod)
+    assert _reach(db, f"outsider/{evil}") == 1
+    out = capsys.readouterr().out
+    assert out.startswith("denied: outsider/ev\\x1b[2Jil\\x0aallowed: x -> shop/shop-web-5d8f on TCP 3000\n")
+    assert "\x1b" not in out and "\nallowed" not in out
+    # Control: a plain name prints as it is.
+    assert _reach(db, "outsider/outsider-2f9a") == 1
+    assert capsys.readouterr().out.startswith("denied: outsider/outsider-2f9a -> shop/shop-web-5d8f on TCP 3000\n")
+
+
+def test_findings_drop_c1_control_characters_from_environment_text(tmp_path, capsys):
+    # v1's safe() keeps U+0080 to U+009F; U+009B is CSI, which a terminal may obey as ESC [.
+    name = "p\x9b31m\x9bq-\x85x"
+    hostile = allow(name, EVERY, {"matchExpressions": [{"key": "app", "operator": "Gt", "values": ["1"]}]}, ns="shop")
+    db = _course(tmp_path, capsys, "c1", hostile)
+    store = Store(db)
+    for out in (render.findings(store, NOW), render.findings(store, NOW, history=[])):
+        assert not any(chr(c) in out for c in range(0x80, 0xa0)), out
+        # Control: the printable part of the name still shows, in the open path's note.
+        assert "NetworkPolicy shop/p31mq\\-x" in out

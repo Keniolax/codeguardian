@@ -252,14 +252,14 @@ option that it does not know, or a model file that it cannot open. It writes the
 to stderr. Before this change every answer exited 0, and a bad pod name exited 1, which
 reads as denied.
 
-The Kubernetes facts in the model may not hold now. The last export may have failed, the
-last good snapshot may be older than the one-hour refresh period, or a second snapshot
-with the same time may have been refused as a conflict. Then `reach` prints a note first.
-The note names the source and the reason in the words that `findings` uses. Next comes the
-answer from the last good snapshot, and `reach` exits 2, not evaluated. So a script cannot
-read an old "denied" as safe. A good snapshot taken later removes the note. A conflict
-older than the snapshot in the model does not count, and nor does a conflict of another
-source.
+Sometimes the Kubernetes facts in the model may not hold now: the last export failed, the
+last good snapshot is older than the one-hour refresh period, or `ingest` refused a second
+snapshot with the same time as a conflict. In each case `reach` first prints a note. The
+note names the source and the reason in the words that `findings` uses. Then `reach`
+prints the answer that the last good snapshot gives, and exits 2, not evaluated. So a
+script cannot read an old "denied" as safe. A good snapshot taken later removes the note.
+A conflict older than the snapshot in the model does not count, and a conflict of another
+source does not count either.
 
 How to run it on the fixtures. `--now` and `--at` set the clock, because the data is
 from 2026-11-14.
@@ -509,6 +509,13 @@ What was learned:
   a model file that could not be opened would have read as denied, and an unknown option
   as not evaluated. Every way out that is not an answer now exits 3, and a test checks
   each of them.
+- An answer from old facts must say that it is old. `reach` gave "denied" with exit 1
+  from a model whose last Kubernetes export had failed. Now it names the source and exits
+  2.
+- Escaping for one output does not cover another. v1's `safe()` escapes text for a GitHub
+  comment. It removes the C0 control characters but keeps C1 (U+0080 to U+009F). In
+  ECMA-48, U+009B is CSI, the same as ESC [. `findings` printed U+009B raw from a policy
+  name. Version 2's text output now removes C1 too.
 - An older snapshot must be refused, or it overwrites newer facts. But it still says
   what held at its own time, so the history has to keep it. With refused snapshots left
   out of the replay, two arrival orders of the same inputs give two histories; the

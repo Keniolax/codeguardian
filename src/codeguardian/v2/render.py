@@ -1,5 +1,6 @@
 """Text output for people. Every string that came from the environment or the model goes
-through v1's safe(), which escapes Markdown and HTML and breaks links and @-mentions.
+through safe(): v1's, which escapes Markdown and HTML and breaks links and @-mentions, and
+which here also drops the C1 control characters, since this output goes to a terminal.
 Entity IDs are escaped too: they carry names an attacker may have chosen. Rule IDs,
 hex IDs, severities and normalised times are produced by this code and printed as they are.
 
@@ -9,11 +10,16 @@ them for the shell.
 """
 
 import json
+import re
 
-from ..render import safe
+from ..render import safe as markdown_safe
 from . import respond
 from .schema import REFRESH_SECONDS, seconds_between
 from .correlate import all_entities, members, timeline
+
+# v1's safe() drops the C0 controls but keeps C1 (U+0080 to U+009F). These are control
+# codes too: in ECMA-48, U+009B is CSI, the same as ESC [, and a terminal may obey it.
+_C1 = re.compile("[\x80-\x9f]")
 
 COLLECTORS = ("aws.state", "k8s.state", "ai.inventory")
 CHANGE_COUNTERS = {
@@ -22,6 +28,10 @@ CHANGE_COUNTERS = {
     "model_change_superseded": "IAM change records older than a change already applied to the same policy",
     "model_change_older_than_model": "IAM change records older than the snapshot that confirmed the role",
 }
+
+
+def safe(text, limit=1500):
+    return markdown_safe(_C1.sub("", str(text)), limit)
 
 
 def term(text, limit=500):
