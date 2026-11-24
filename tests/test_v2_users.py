@@ -340,3 +340,20 @@ def test_cannot_match_warning_names_every_pair_of_types_the_edge_joins(tmp_path)
     # Control: the same step from a user finds the user's bucket, with no warning.
     rows = run(store, {"find": "iam_user", "where": [], "related": step, "limit": 10})
     assert [r["id"] for r in rows["rows"]] == [KB] and rows["cannot_match"] is None
+
+
+def test_cannot_match_warning_names_every_type_the_walk_is_at(tmp_path):
+    from codeguardian.v2.ask import ask
+
+    class Model:
+        def complete_json(self, system, user, schema):
+            query = {"find": "s3_bucket", "where": [], "limit": 20, "related": [
+                {"edge": "has_permission", "dir": "in"}, {"edge": "runs_as", "dir": "out"}]}
+            return {"query": query, "note": "n"}, {"model": "stub", "served_by": "stub", "usage": {}}
+
+    store, _ = build(tmp_path, edit_iam=with_iam(users=[user("ops-admin", attached=[ADMIN])]))
+    # has_permission into a bucket reaches roles and users; neither runs as anything.
+    assert ask(store, "x", Model())["cannot_match"]["from"] == "iam_role or iam_user"
+    # Control: with no user in the model the walk is at roles only.
+    store, _ = build(tmp_path)
+    assert ask(store, "x", Model())["cannot_match"]["from"] == "iam_role"

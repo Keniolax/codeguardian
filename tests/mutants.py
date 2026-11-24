@@ -386,6 +386,9 @@ MUTANTS = [
      "f\"  id {f['finding_id']}; primary {f['primary_entity']}\"", [T("test_user_arn_from_the_export_cannot_forge_a_finding_line", USERS)]),
     ("model file left readable by others", V2 + "store.py",
      "            os.chmod(path, 0o600)", "            pass", [T("test_model_database_file_is_readable_by_its_owner_only", USERS)]),
+    ("cannot-match warning names one of the types the walk is at", V2 + "ask.py",
+     '            here = " or ".join(sorted(at))', "            here = sorted(at)[0]",
+     [T("test_cannot_match_warning_names_every_type_the_walk_is_at", USERS)]),
     ("model file not created owner-only first", V2 + "store.py",
      "            os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))", "            pass", [T("test_model_database_file_is_readable_by_its_owner_only", USERS)]),
     # iam-users review of 2026-11-24: faults found by input, and controls that had no test.
