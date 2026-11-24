@@ -7,10 +7,10 @@ each named test on its own, and restores the file. A mutant counts as caught onl
 pytest exits with code 1 (tests failed). Exit code 2 or more means the mutant broke
 collection or imports, which proves nothing, so it is reported as broken. The run fails
 if any mutant survives or breaks, if the tree is not clean afterwards, or if a test whose
-name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy, -NP or order
-files, has no mutant, or any test in the ask file after the three named in ASK_BEFORE_2C. In
-the NetworkPolicy, -NP and order files every parametrized case must also have a mutant of
-its own.
+name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy, -NP, order or
+IAM user files, has no mutant, or any test in the ask file after the three named in
+ASK_BEFORE_2C. In the NetworkPolicy, -NP, order and IAM user files every parametrized case
+must also have a mutant of its own.
 
 The reviewer's week 17 mutants live in tests/mutants_week17.py, which is frozen with the
 reviewer; this file runs them after its own.
@@ -41,6 +41,8 @@ CLI = V2 + "cli.py"
 ORDER = "tests/test_v2_order.py"
 PL = V2 + "pipeline.py"
 HIST = V2 + "history.py"
+USERS = "tests/test_v2_users.py"
+AWS = V2 + "collectors/aws.py"
 
 
 def T(name, file=CHAIN):
@@ -325,6 +327,157 @@ MUTANTS = [
      '    if not isinstance(q.get("find"), str) or q["find"] not in ENTITY_TYPES:',
      '    if q.get("find") not in ENTITY_TYPES:',
      [T("test_ask_refuses_malformed_and_out_of_schema_queries[query9]", ASK)]),
+    # iam-users: users and groups, and a source line that names what the model does not read.
+    ("user section left out of the collector", AWS,
+     'SECTIONS = (("GroupDetailList", _groups), ("UserDetailList", _users))', 'SECTIONS = (("GroupDetailList", _groups),)',
+     [T("test_user_with_administrator_access_opens_a_finding_and_a_scoped_user_does_not", USERS), T("test_source_line_names_what_the_model_does_not_read[access-keys]", USERS)]),
+    ("group section left out of the collector", AWS,
+     'SECTIONS = (("GroupDetailList", _groups), ("UserDetailList", _users))', 'SECTIONS = (("UserDetailList", _users),)',
+     [T("test_group_policies_reach_their_members_and_no_one_else", USERS), T("test_user_in_a_group_the_model_does_not_hold_has_permissions_not_fully_known", USERS)]),
+    ("group inline policies not given to members", AWS,
+     '        pols += [(f"group:{name}:inline:{n}", d) for n, d in sorted((g["attrs"].get("inline_policies") or {}).items())]',
+     "        pass", [T("test_group_policies_reach_their_members_and_no_one_else", USERS)]),
+    ("group managed policies not given to members", AWS,
+     '            pols.append((f"group:{name}:{arn}", p["attrs"].get("document") if p else None))', "            pass",
+     [T("test_group_policies_reach_their_members_and_no_one_else", USERS)]),
+    ("group the model does not hold reads as no policy", AWS,
+     '            pols.append((f"group:{name}", None))', "            pass", [T("test_user_in_a_group_the_model_does_not_hold_has_permissions_not_fully_known", USERS)]),
+    ("user permissions boundary not read", AWS,
+     '                 "permissions_boundary": (u.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn")}',
+     '                 "permissions_boundary": None}', [T("test_user_with_a_permissions_boundary_is_marked_not_evaluated", USERS)]),
+    ("user with no inline policy list refused", AWS,
+     "                 and isinstance(e.get(pol_key, []), list) and isinstance(e.get(\"AttachedManagedPolicies\", []), list)",
+     "                 and isinstance(e.get(pol_key), list) and isinstance(e.get(\"AttachedManagedPolicies\", []), list)",
+     [T("test_user_entry_without_policy_lists_is_read_as_aws_sends_it", USERS)]),
+    ("user policy list not checked", AWS,
+     "                 and isinstance(e.get(pol_key, []), list) and isinstance(e.get(\"AttachedManagedPolicies\", []), list)",
+     "                 and isinstance(e.get(\"AttachedManagedPolicies\", []), list)", [T("test_user_entry_without_policy_lists_is_read_as_aws_sends_it", USERS)]),
+    ("missing user list not named", AWS,
+     '    out = [f"{LABELS[k]} (not in the export)" for k in ("UserDetailList", "GroupDetailList") if k not in iam]',
+     "    out = []", [T("test_source_line_names_what_the_model_does_not_read[no-user-list]", USERS)]),
+    ("other unread lists not named", AWS,
+     '    out += [f"{len(v)} {LABELS.get(k, k)}" for k, v in sorted(iam.items())\n            if k not in read and isinstance(v, list) and v]',
+     "    out += []", [T("test_source_line_names_what_the_model_does_not_read[other-list]", USERS)]),
+    ("access keys not named as unread", AWS,
+     "    if users:\n        out.append(", "    if False:\n        out.append(", [T("test_source_line_names_what_the_model_does_not_read[access-keys]", USERS)]),
+    ("source line drops the unread list", V2 + "render.py",
+     "        if unread:\n            lines[-1] =", "        if False:\n            lines[-1] =",
+     [T("test_source_line_names_what_the_model_does_not_read[access-keys]", USERS), T("test_source_line_names_what_the_model_does_not_read[no-user-list]", USERS), T("test_source_line_names_what_the_model_does_not_read[other-list]", USERS)]),
+    ("source line names unread parts when there are none", V2 + "render.py",
+     "        if unread:\n            lines[-1] =", "        if True:\n            lines[-1] =",
+     [T("test_source_line_names_what_the_model_does_not_read[nothing-unread]", USERS)]),
+    ("user written under another source, so a later snapshot never sweeps it", AWS,
+     '        if store.upsert_entity(uid, "iam_user", attrs, {"tags": _tags(u.get("Tags"))}, SOURCE, at):',
+     '        if store.upsert_entity(uid, "iam_user", attrs, {"tags": _tags(u.get("Tags"))}, "aws.users", at):',
+     [T("test_user_gone_from_the_next_snapshot_is_deleted_and_its_finding_resolves", USERS)]),
+    ("user admin rule checks roles", V2 + "rules/posture.toml",
+     'entity = "iam_user"\nwhere = [{ attr = "admin_wildcard"', 'entity = "iam_role"\nwhere = [{ attr = "admin_wildcard"',
+     [T("test_user_with_administrator_access_opens_a_finding_and_a_scoped_user_does_not", USERS)]),
+    ("user unknown-document rule checks roles", V2 + "rules/posture.toml",
+     'entity = "iam_user"\nwhere = [{ attr = "unknown_policy_documents"',
+     'entity = "iam_role"\nwhere = [{ attr = "unknown_policy_documents"', [T("test_user_in_a_group_the_model_does_not_hold_has_permissions_not_fully_known", USERS)]),
+    ("user not-evaluated rule checks roles", V2 + "rules/posture.toml",
+     'entity = "iam_user"\nwhere = [{ attr = "not_evaluated"', 'entity = "iam_role"\nwhere = [{ attr = "not_evaluated"',
+     [T("test_user_with_a_permissions_boundary_is_marked_not_evaluated", USERS)]),
+    ("has_permission from a user missing from the edge meanings", V2 + "schema.py",
+     '(("iam_role", "s3_bucket"), ("iam_user", "s3_bucket"))', '(("iam_role", "s3_bucket"),)', [T("test_user_with_administrator_access_opens_a_finding_and_a_scoped_user_does_not", USERS)]),
+    ("finding's primary entity printed unescaped", V2 + "render.py",
+     "f\"  id {f['finding_id']}; primary {safe(f['primary_entity'], 300)}\"",
+     "f\"  id {f['finding_id']}; primary {f['primary_entity']}\"", [T("test_user_arn_from_the_export_cannot_forge_a_finding_line", USERS)]),
+    ("model file left readable by others", V2 + "store.py",
+     "            os.chmod(path, 0o600)", "            pass", [T("test_model_database_file_is_readable_by_its_owner_only", USERS)]),
+    ("model file not created owner-only first", V2 + "store.py",
+     "            os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))", "            pass", [T("test_model_database_file_is_readable_by_its_owner_only", USERS)]),
+    # iam-users review of 2026-11-24: faults found by input, and controls that had no test.
+    ("user finding drops what the resolver did not evaluate", V2 + "posture.py",
+     '    notes += ent["attrs"].get("not_evaluated", []) if ent["type"] in PRINCIPALS else []',
+     '    notes += ent["attrs"].get("not_evaluated", []) if ent["type"] == "iam_role" else []',
+     [T("test_user_finding_names_what_the_resolver_could_not_read", USERS)]),
+    ("user finding drops the documents the model does not hold", V2 + "posture.py",
+     '    unknown = ent["attrs"].get("unknown_policy_documents") if ent["type"] in PRINCIPALS else None',
+     '    unknown = ent["attrs"].get("unknown_policy_documents") if ent["type"] == "iam_role" else None',
+     [T("test_user_finding_names_what_the_resolver_could_not_read", USERS)]),
+    ("a group's managed policy the model does not hold read as empty", AWS,
+     '            pols.append((f"group:{name}:{arn}", p["attrs"].get("document") if p else None))',
+     '            pols.append((f"group:{name}:{arn}", p["attrs"].get("document") if p else {}))',
+     [T("test_user_finding_names_what_the_resolver_could_not_read", USERS)]),
+    ("a user resolved again only when its own entry changed", AWS,
+     '            delta.entity(uid, "iam_user")\n        seen.add(uid)\n        principals.append(uid)',
+     '            delta.entity(uid, "iam_user")\n            principals.append(uid)\n        seen.add(uid)',
+     [T("test_member_is_flagged_when_only_its_group_changes_in_a_later_snapshot", USERS)]),
+    ("users resolved before the sweep", AWS,
+     '    store.set_setting(f"unread:{SOURCE}", json.dumps(unread(data["iam"], read)))\n',
+     '    store.set_setting(f"unread:{SOURCE}", json.dumps(unread(data["iam"], read)))\n'
+     "    for uid in users:\n        delta.merge(recompute_role(store, uid, at, SOURCE))\n    users = []\n",
+     [T("test_next_snapshot_drops_a_bucket_and_a_group_and_moves_a_group", USERS)]),
+    ("group gone from the export never swept", AWS,
+     '            delta.entity(gid, "iam_group")\n        seen.add(gid)',
+     '            delta.entity(gid, "iam_group")\n        seen.add(gid)\n'
+     "        store.db.execute(\"UPDATE entities SET source='kept' WHERE id=?\", (gid,))",
+     [T("test_next_snapshot_drops_a_bucket_and_a_group_and_moves_a_group", USERS)]),
+    ("group names not checked as strings", AWS,
+     "                 and all(isinstance(g, str) for g in e.get(\"GroupList\", [])),", "                 ,",
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("user or group ARN not checked as a string", AWS,
+     '            need(isinstance(e, dict) and isinstance(e.get(name_key), str) and isinstance(e.get("Arn"), str)',
+     '            need(isinstance(e, dict) and isinstance(e.get(name_key), str)',
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("entry listed twice read as one", AWS,
+     '    need(arn not in arns, "aws iam", f"{key} lists {arn!r} twice")', "    pass",
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("inline policy entry not checked as an object with a name", AWS,
+     "    need(all(isinstance(n, str) for n in names), \"aws iam\",", "    need(True, \"aws iam\",",
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("two inline policies of one name read as one", AWS,
+     '    need(len(set(names)) == len(names), "aws iam",', '    need(True, "aws iam",',
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("attached policy entry not checked", AWS,
+     '    need(all(isinstance(p, dict) and isinstance(p.get("PolicyArn"), str) for p in e.get("AttachedManagedPolicies") or []),',
+     "    need(True,", [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("boundary not checked as an object", AWS,
+     '    need(isinstance(e.get("PermissionsBoundary") or {}, dict), "aws iam",', '    need(True, "aws iam",',
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("managed policy listed twice read as one", AWS,
+     "        need(p[\"Arn\"] not in policies, \"aws iam\", f\"Policies lists {p['Arn']!r} twice\")", "        pass",
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("role entries not checked", AWS,
+     '        _check_entry("RoleDetailList", r, "RolePolicyList", roles)', "        pass",
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("user and group entries not checked", AWS,
+     "            _check_entry(key, e, pol_key, arns)", "            pass",
+     [T("test_malformed_entry_refuses_the_snapshot_and_the_model_stands", USERS)]),
+    ("one page of a longer listing read as the whole account", AWS,
+     '    need(not any(iam.get(k) for k in ("IsTruncated", "Marker", "NextToken")), "aws iam",',
+     '    need(True, "aws iam",', [T("test_one_page_of_a_longer_listing_is_refused_and_nothing_is_swept", USERS)]),
+    ("only IsTruncated marks one page", AWS,
+     '    need(not any(iam.get(k) for k in ("IsTruncated", "Marker", "NextToken")), "aws iam",',
+     '    need(not any(iam.get(k) for k in ("IsTruncated",)), "aws iam",',
+     [T("test_one_page_of_a_longer_listing_is_refused_and_nothing_is_swept", USERS)]),
+    ("user admin rule below its role twin's severity", V2 + "rules/posture.toml",
+     'id = "POST-IAM-004"\nversion = 1\nkind = "posture"\nseverity = "high"',
+     'id = "POST-IAM-004"\nversion = 1\nkind = "posture"\nseverity = "medium"',
+     [T("test_user_rules_have_the_severity_and_test_of_their_role_twins", USERS)]),
+    ("user unknown-document rule below its role twin's severity", V2 + "rules/posture.toml",
+     'id = "POST-IAM-005"\nversion = 1\nkind = "posture"\nseverity = "medium"',
+     'id = "POST-IAM-005"\nversion = 1\nkind = "posture"\nseverity = "low"',
+     [T("test_user_rules_have_the_severity_and_test_of_their_role_twins", USERS)]),
+    ("user not-evaluated rule below its role twin's severity", V2 + "rules/posture.toml",
+     'id = "POST-IAM-006"\nversion = 1\nkind = "posture"\nseverity = "medium"',
+     'id = "POST-IAM-006"\nversion = 1\nkind = "posture"\nseverity = "low"',
+     [T("test_user_rules_have_the_severity_and_test_of_their_role_twins", USERS)]),
+    ("unread note only on a source line that reads ok", V2 + "render.py",
+     '        unread = json.loads(store.setting(f"unread:{name}") or "[]") if s is not None else []',
+     '        unread = json.loads(store.setting(f"unread:{name}") or "[]") if s is not None and s["status"] == "ok"'
+     " else []", [T("test_source_line_keeps_the_unread_note_when_the_source_failed_or_is_stale", USERS)]),
+    ("language names an end type twice", V2 + "ask.py",
+     '    return " or ".join(dict.fromkeys(types))', '    return " or ".join(types)',
+     [T("test_user_with_administrator_access_opens_a_finding_and_a_scoped_user_does_not", USERS)]),
+    ("cannot-match warning names only the first pair of types", V2 + "render.py",
+     "for a, b in joins) if joins", "for a, b in joins[:1]) if joins",
+     [T("test_cannot_match_warning_names_every_pair_of_types_the_edge_joins", USERS)]),
+    ("empty unread lists named", AWS,
+     "            if k not in read and isinstance(v, list) and v]", "            if k not in read and isinstance(v, list)]",
+     [T("test_source_line_names_what_the_model_does_not_read[empty-other-list]", USERS)]),
     # ask-edges: an empty answer from a step no edge can take does not read as "none".
     ("empty answer never checked for a step that cannot match", V2 + "ask.py",
      '    if not rows and q["related"]:', "    if False:",
@@ -355,12 +508,13 @@ MUTANTS = [
      "            else \"no collector writes this edge yet\"", "            else \"nothing\"",
      [T("test_ask_says_when_a_query_cannot_match_so_an_empty_answer_does_not_read_as_none", ASK)]),
     ("language sends edge names without meanings", V2 + "ask.py",
-     '        edges[t] = {"means": means, "from": ends[0], "to": ends[1]} if ends else {"means": means}',
+     '        edges[t] = {"means": means, "from": _either(p[0] for p in pairs), "to": _either(p[1] for p in pairs)} \\\n'
+     "            if pairs else {\"means\": means}",
      "        edges[t] = {}",
      [T("test_ask_language_gives_each_edge_its_meaning_and_the_types_the_collectors_join", ASK)]),
     ("edge meaning names other ends than the collector writes", V2 + "schema.py",
-     '" IAM permission and not a read seen in logs", ("tool", "s3_bucket")),',
-     '" IAM permission and not a read seen in logs", ("iam_role", "s3_bucket")),',
+     '" IAM permission and not a read seen in logs", (("tool", "s3_bucket"),)),',
+     '" IAM permission and not a read seen in logs", (("iam_role", "s3_bucket"),)),',
      [T("test_ask_language_gives_each_edge_its_meaning_and_the_types_the_collectors_join", ASK)]),
     ("model note printed unescaped", V2 + "render.py",
      "f\"Note: {safe(result.get('note', ''), 500)}\"", "f\"Note: {result.get('note', '')}\"",
@@ -1021,7 +1175,7 @@ def chain_tests():
     out = []
     for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True),
                        (NET, lambda n: True), (SHADOW, lambda n: True), (ORDER, lambda n: True),
-                       (ASK, lambda n: n not in ASK_BEFORE_2C)):
+                       (ASK, lambda n: n not in ASK_BEFORE_2C), (USERS, lambda n: True)):
         tree = ast.parse((ROOT / file).read_text())
         out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name.startswith("test_") and keep(n.name)]
@@ -1047,11 +1201,11 @@ def main():
     named = {node for *_, tests in MUTANTS for node in tests}
     env = dict(os.environ, PYTHONPATH="src", PYTHONDONTWRITEBYTECODE="1")
     collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN,
-                                NET, SHADOW, ORDER], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
-    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW, ORDER)) and n not in named]
+                                NET, SHADOW, ORDER, USERS], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
+    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW, ORDER, USERS)) and n not in named]
     for n in loose:
         print(f"parametrized case with no mutant of its own: {n}")
-    if any(n.startswith((NET, SHADOW, ORDER)) for n in loose):
+    if any(n.startswith((NET, SHADOW, ORDER, USERS)) for n in loose):
         return 1
     nodes = sorted(named)
     baseline = [n for n in nodes if pytest(n) != 0]
@@ -1080,7 +1234,7 @@ def main():
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
           f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy, -NP,"
-          " order and ask tests, all covered")
+          " order, ask and IAM user tests, all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")
         return 1

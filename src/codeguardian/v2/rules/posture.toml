@@ -31,6 +31,36 @@ entity = "iam_role"
 where = [{ attr = "not_evaluated", op = "nonempty" }]
 
 [[rule]]
+id = "POST-IAM-004"
+version = 1
+kind = "posture"
+severity = "high"
+title = "An IAM user's policies, or its groups' policies, allow every action on every resource"
+frameworks = []
+entity = "iam_user"
+where = [{ attr = "admin_wildcard", op = "eq", value = true }]
+
+[[rule]]
+id = "POST-IAM-005"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "An IAM user has policies whose documents the model does not hold, so its permissions are not fully known"
+frameworks = []
+entity = "iam_user"
+where = [{ attr = "unknown_policy_documents", op = "nonempty" }]
+
+[[rule]]
+id = "POST-IAM-006"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "An IAM user has policy statements the resolver did not evaluate, so its permissions may be wider than the model shows"
+frameworks = []
+entity = "iam_user"
+where = [{ attr = "not_evaluated", op = "nonempty" }]
+
+[[rule]]
 id = "POST-K8S-001"
 version = 1
 kind = "posture"

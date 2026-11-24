@@ -18,6 +18,10 @@ ENTITY_TYPES = {
                                      "admin_wildcard", "unknown_policy_documents", "not_evaluated",
                                      "trust_subjects", "permissions_boundary", "policy_changes", "change_markers")),
     "iam_policy": ("aws", "identity", ("name", "arn", "document")),
+    "iam_user": ("aws", "identity", ("name", "arn", "inline_policies", "attached_policies", "groups",
+                                     "admin_wildcard", "unknown_policy_documents", "not_evaluated",
+                                     "permissions_boundary")),
+    "iam_group": ("aws", "identity", ("name", "arn", "inline_policies", "attached_policies")),
     "service": ("k8s", "kubernetes", ("name", "namespace", "service_type", "selector", "internet_facing", "ports")),
     "pod": ("k8s", "kubernetes", ("name", "namespace", "service_account", "privileged", "node", "pod_labels",
                                   "container_ports", "host_network")),
@@ -33,21 +37,22 @@ ENTITY_TYPES = {
 EDGE_TYPES = ("contains", "runs_as", "assumes", "has_permission", "exposes", "reachable_from",
               "uses_model", "can_call", "holds", "reads", "deploys_to", "protects")
 
-# edge type -> (what it means, (source type, target type) as the collectors write it, or
-# None when no collector writes it yet). ask sends this to the model, so a query can name
-# the edge that answers the question, not one whose name only sounds right.
+# edge type -> (what it means, the (source type, target type) pairs the collectors write
+# it between, or None when no collector writes it yet). ask sends this to the model, so a
+# query can name the edge that answers the question, not one whose name only sounds right.
 EDGE_MEANINGS = {
-    "contains": ("a pod runs an AI agent, from the AI inventory", ("pod", "agent")),
-    "runs_as": ("a pod runs as a Kubernetes service account", ("pod", "service_account")),
-    "assumes": ("a service account can take an IAM role through IRSA", ("service_account", "iam_role")),
-    "has_permission": ("the role's IAM policies allow S3 actions on the bucket, such as reading its"
-                       " objects; bucket policies and SCPs are not evaluated", ("iam_role", "s3_bucket")),
-    "exposes": ("a Kubernetes Service sends traffic to a pod", ("service", "pod")),
-    "reachable_from": ("a Service can be reached from the internet", ("service", "internet")),
-    "uses_model": ("an AI agent calls a model endpoint", ("agent", "model_endpoint")),
-    "can_call": ("an AI agent can call a tool", ("agent", "tool")),
+    "contains": ("a pod runs an AI agent, from the AI inventory", (("pod", "agent"),)),
+    "runs_as": ("a pod runs as a Kubernetes service account", (("pod", "service_account"),)),
+    "assumes": ("a service account can take an IAM role through IRSA", (("service_account", "iam_role"),)),
+    "has_permission": ("the IAM policies of a role, or of a user and its groups, allow S3 actions on the"
+                       " bucket, such as reading its objects; bucket policies and SCPs are not evaluated",
+                       (("iam_role", "s3_bucket"), ("iam_user", "s3_bucket"))),
+    "exposes": ("a Kubernetes Service sends traffic to a pod", (("service", "pod"),)),
+    "reachable_from": ("a Service can be reached from the internet", (("service", "internet"),)),
+    "uses_model": ("an AI agent calls a model endpoint", (("agent", "model_endpoint"),)),
+    "can_call": ("an AI agent can call a tool", (("agent", "tool"),)),
     "reads": ("a bucket that an AI tool declares as its data source in the AI inventory; not an"
-              " IAM permission and not a read seen in logs", ("tool", "s3_bucket")),
+              " IAM permission and not a read seen in logs", (("tool", "s3_bucket"),)),
     "holds": ("no collector writes this edge yet", None),
     "deploys_to": ("no collector writes this edge yet", None),
     "protects": ("no collector writes this edge yet", None),

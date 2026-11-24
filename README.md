@@ -176,7 +176,8 @@ is read, and the role reads the bucket, which none of the agent's tools declares
 - Collectors read exported files: IAM authorization details, the bucket list and tags,
   `kubectl get -o json`, and a small declared AI inventory. A collector that cannot
   read its file fails; its facts become stale but still count. The output names any
-  source that failed, never ran, or is past its refresh period.
+  source that failed, never ran, or is past its refresh period, and any part of a
+  source's data that the model does not read.
 - Events (CloudTrail, Kubernetes audit, Falco) are read one at a time from a file or
   stdin and joined to the model. `PutRolePolicy` and `DeleteRolePolicy` change the model
   at once, in whatever order the records arrive. `AttachRolePolicy` carries only an ARN,
@@ -196,6 +197,16 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   does not read as "none".
 - The IAM resolver reads Allow statements and wildcards only. Anything else (conditions,
   Deny, NotAction, boundaries, SCPs, bucket policies) is listed as not evaluated.
+- IAM users and groups come from the same export. A user's permissions are its own
+  policies plus its groups' policies. A user whose policies allow every action on every
+  resource opens `POST-IAM-004`. A user in a group the model does not hold, or with a
+  permissions boundary, is marked as not fully known. Access keys and their age are not
+  in this export, so the source line says they were not read. Changes to users apply at
+  the next snapshot; CloudTrail records about users are not read. A user's finding names
+  the documents and statements the resolver could not read, as a role's finding does.
+- The collector refuses an IAM export that is one page of a longer listing, lists one ARN
+  twice, gives two inline policies one name, or holds a policy entry that is not an
+  object. The source then shows as failed, and the model keeps its last good snapshot.
 
 Kubernetes NetworkPolicy is evaluated as the Kubernetes reference defines it. For each pod
 that a Service selects, the collector asks one question: can a connection from outside
@@ -410,7 +421,7 @@ To take a snapshot of your own account or cluster, use the export scripts. They 
 collectors read, with mode 0600, plus a manifest. They refuse to write inside a git work
 tree unless git ignores the path (`exports/` is ignored here). Then ingest takes the time
 and the cluster name from the manifests. Keep the database under `exports/` too, since it
-holds the same real data:
+holds the same real data; `ingest` gives it mode 0600 as well:
 
 ```
 .venv/bin/python -m codeguardian.export aws --out exports/aws
@@ -422,9 +433,18 @@ holds the same real data:
 The cluster name must match the one in your AI inventory. A bucket whose tags cannot be
 read (access denied, throttling, a timeout) is kept as "not evaluated", and a failed
 IAM, bucket-list or kubectl call stops the export. The k8s export drops env values and
-the last-applied annotation, which can hold secrets. The scripts have been tested only
-against recorded CLI output from fake `aws` and `kubectl` programs. They have not been
-run on a real account or cluster.
+the last-applied annotation, which can hold secrets. The tests use recorded CLI output
+from fake `aws` and `kubectl` programs.
+
+The AWS export ran once on a real account, on 2026-11-23: a throwaway account, through an
+IAM user whose one policy allows only the three read actions above. The account held 4
+roles (all of them AWS service-linked roles), 2 IAM users, no groups, 5 managed policies
+and no buckets. The export took 7 seconds and wrote 17 MB, nearly all of it the versions
+of AWS managed policies. `ingest` took 0.6 seconds. At first the model read only roles,
+and `findings` said "none" although one of the two users holds `AdministratorAccess`.
+With users read, it opens `POST-IAM-004` for that user and none for the read-only user,
+and the source line says the users' access keys were not read. The Kubernetes export has
+not run on a real cluster.
 
 The least privilege the export needs:
 
@@ -504,6 +524,11 @@ Measured on 2026-11-17 at commit `691bfdd`, for the ordering of snapshots and re
 - After the review fixes at `f84e86f`: 222 tests pass (22 for ordering). The mutation
   run removes 210 controls: 272 mutant-test pairs, all fail without their control.
 
+Measured on 2026-11-24 at commit `7088102`, after the review of IAM users: 334 tests pass
+(107 for v1, 227 for v2, of which 21 are for IAM users). The mutation run removes 277
+controls one at a time: 349 mutant-test pairs, all fail without their control. The user
+tests read hand-written exports for the documentation account `111122223333`.
+
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
 chain fixture now also lists its 4 namespaces), and the noise
 copies the chain's own record shapes, so these numbers do not predict speed on a real
@@ -570,6 +595,16 @@ What was learned:
   changed four older tests: three listed every open path rule, and one expected a late
   alert's incident to hold that alert alone. An open finding on the alert's pod now joins
   that incident too.
+- A source that ran is not a source that was read in full. The first real snapshot came
+  back "ok" with no findings, while the model skipped every IAM user, one of them an
+  administrator. The source line now names each part of the export the model does not
+  read. AWS also leaves out a user's policy list when it is empty, which no hand-written
+  fixture did; a strict check would have refused the real export.
+- A file that lists one thing twice must be refused, not read twice. The collector kept
+  the last of two entries with one ARN, and the last of two inline policies with one
+  name. A user listed first with `AdministratorAccess` and again without it read as a
+  plain user. A review found this, and found that one page of a paginated export read as
+  the whole account.
 - A hand-written model answer tests the code around the model, not the prompt. The
   recorded `ask` answer used the right edge. A live model given only edge names chose a
   wrong one every time, and "no rows" read as "none". Telling the model what each edge

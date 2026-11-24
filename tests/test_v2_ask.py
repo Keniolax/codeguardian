@@ -78,7 +78,7 @@ def test_ask_says_when_a_query_cannot_match_so_an_empty_answer_does_not_read_as_
     result = ask(store, QUESTION, QueryModel(LIVE["query"], LIVE["note"]))
     assert result["rows"] == []
     assert result["cannot_match"] == {"edge": "reads", "from": "iam_role", "to": "s3_bucket",
-                                      "joins": ("tool", "s3_bucket")}
+                                      "joins": (("tool", "s3_bucket"),)}
     text = render.answer(result)
     # The warning takes the place of "- no rows": a line that reads as "none" must not print.
     assert "no rows" not in text
@@ -124,7 +124,7 @@ def test_ask_language_gives_each_edge_its_meaning_and_the_types_the_collectors_j
     edges = json.loads(language())["edge_types"]
     assert list(edges) == list(EDGE_TYPES)
     assert edges["reads"] == {"means": EDGE_MEANINGS["reads"][0], "from": "tool", "to": "s3_bucket"}
-    assert edges["has_permission"]["from"] == "iam_role" and "IAM policies" in edges["has_permission"]["means"]
+    assert edges["has_permission"]["from"] == "iam_role or iam_user" and "IAM policies" in edges["has_permission"]["means"]
     assert edges["holds"] == {"means": "no collector writes this edge yet"}
     # Every edge in the chain model joins the types its meaning names, and every edge type
     # with ends in the table occurs in the model, so the table cannot drift from the collectors.
@@ -134,7 +134,10 @@ def test_ask_language_gives_each_edge_its_meaning_and_the_types_the_collectors_j
         src, dst = store.entity(e["src"]), store.entity(e["dst"])
         if src and dst:
             seen.setdefault(e["type"], set()).add((src["type"], dst["type"]))
-    assert seen == {t: {ends} for t, (_, ends) in EDGE_MEANINGS.items() if ends}
+    declared = {t: set(pairs) for t, (_, pairs) in EDGE_MEANINGS.items() if pairs}
+    assert {t: v <= declared.get(t, set()) for t, v in seen.items()} == {t: True for t in seen}
+    # The chain holds no IAM user, so its edges are checked in tests/test_v2_users.py.
+    assert seen == {t: pairs - {("iam_user", "s3_bucket")} for t, pairs in declared.items()}
 
 
 def test_ask_note_from_the_model_cannot_forge_a_row_or_hide_the_warning(tmp_path):

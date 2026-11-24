@@ -1,7 +1,7 @@
 """AWS state from three exports:
 
-- `aws iam get-account-authorization-details` (roles, their inline and attached policies,
-  and the managed policies with their versions),
+- `aws iam get-account-authorization-details` (roles, users and groups, their inline and
+  attached policies, and the managed policies with their versions),
 - `aws s3api list-buckets`,
 - a JSON object mapping each bucket name to its `aws s3api get-bucket-tagging` output.
   An untagged bucket is recorded as {"TagSet": []}. A bucket whose tags could not be read
@@ -10,6 +10,10 @@
   tags were not collected at all, and the collector refuses the snapshot.
 
 Bucket sensitivity comes from the tag `data-classification`.
+
+A user's permissions are its own policies plus those of its groups. Access keys are not in
+this export, so the source line says they were not read. Any other part of the IAM export
+the collector does not read is named there too, so it cannot read as "no findings".
 """
 
 import json
@@ -40,18 +44,58 @@ def decode_document(doc):
     return None
 
 
+def _check_entry(key, e, pol_key, arns):
+    """The parts of one role, user or group entry that apply reads. An entry listed twice,
+    or two inline policies of one name, would read as one, so the last would hide the
+    first; a policy entry or boundary that is not an object would stop the collector
+    half-way. Each refuses the snapshot instead."""
+    arn = e["Arn"]
+    need(arn not in arns, "aws iam", f"{key} lists {arn!r} twice")
+    arns.add(arn)
+    names = [p.get("PolicyName") if isinstance(p, dict) else None for p in e.get(pol_key) or []]
+    need(all(isinstance(n, str) for n in names), "aws iam",
+         f"{arn!r}: an entry of {pol_key} is not an object with a PolicyName")
+    need(len(set(names)) == len(names), "aws iam", f"{arn!r}: two entries of {pol_key} have one PolicyName")
+    need(all(isinstance(p, dict) and isinstance(p.get("PolicyArn"), str) for p in e.get("AttachedManagedPolicies") or []),
+         "aws iam", f"{arn!r}: an entry of AttachedManagedPolicies is not an object with a PolicyArn")
+    need(isinstance(e.get("PermissionsBoundary") or {}, dict), "aws iam", f"{arn!r}: PermissionsBoundary is not an object")
+
+
 def load(iam_path, buckets_path, tags_path):
     iam = read_json(iam_path, "aws iam")
     need(isinstance(iam, dict) and isinstance(iam.get("RoleDetailList"), list)
          and isinstance(iam.get("Policies"), list), "aws iam",
          "expected get-account-authorization-details output with RoleDetailList and Policies")
+    # One page of a longer listing would read as the whole account, and the sweep would
+    # delete what is on the other pages.
+    need(not any(iam.get(k) for k in ("IsTruncated", "Marker", "NextToken")), "aws iam",
+         "the export is one page of a longer listing (IsTruncated, Marker or NextToken); export every page")
+    roles = set()
     for r in iam["RoleDetailList"]:
         need(isinstance(r, dict) and isinstance(r.get("RoleName"), str) and isinstance(r.get("Arn"), str)
              and isinstance(r.get("RolePolicyList"), list) and isinstance(r.get("AttachedManagedPolicies"), list),
              "aws iam", "a role entry lacks RoleName, Arn, RolePolicyList or AttachedManagedPolicies")
+        _check_entry("RoleDetailList", r, "RolePolicyList", roles)
+    policies = set()
     for p in iam["Policies"]:
         need(isinstance(p, dict) and isinstance(p.get("Arn"), str) and isinstance(p.get("PolicyVersionList"), list),
              "aws iam", "a policy entry lacks Arn or PolicyVersionList")
+        need(p["Arn"] not in policies, "aws iam", f"Policies lists {p['Arn']!r} twice")
+        policies.add(p["Arn"])
+    # AWS leaves out a user's or group's policy list when it is empty.
+    for key, name_key, pol_key in (("UserDetailList", "UserName", "UserPolicyList"),
+                                   ("GroupDetailList", "GroupName", "GroupPolicyList")):
+        if key not in iam:
+            continue
+        need(isinstance(iam[key], list), "aws iam", f"{key} is not a list")
+        arns = set()
+        for e in iam[key]:
+            need(isinstance(e, dict) and isinstance(e.get(name_key), str) and isinstance(e.get("Arn"), str)
+                 and isinstance(e.get(pol_key, []), list) and isinstance(e.get("AttachedManagedPolicies", []), list)
+                 and isinstance(e.get("GroupList", []), list)
+                 and all(isinstance(g, str) for g in e.get("GroupList", [])),
+                 "aws iam", f"an entry of {key} lacks {name_key} or Arn, or a policy or group list is not a list")
+            _check_entry(key, e, pol_key, arns)
     buckets = read_json(buckets_path, "aws s3")
     need(isinstance(buckets, dict) and isinstance(buckets.get("Buckets"), list), "aws s3",
          "expected list-buckets output with Buckets")
@@ -71,6 +115,59 @@ def load(iam_path, buckets_path, tags_path):
 
 def _tags(tag_list):
     return {str(t.get("Key")): str(t.get("Value")) for t in tag_list or [] if isinstance(t, dict)}
+
+
+def _inline(policy_list):
+    return {str(p.get("PolicyName")): decode_document(p.get("PolicyDocument")) for p in policy_list or []}
+
+
+def _attached(policy_list):
+    return sorted(str(p.get("PolicyArn")) for p in policy_list or [])
+
+
+DERIVED = ("admin_wildcard", "unknown_policy_documents", "not_evaluated")
+
+
+def _groups(store, entries, at, delta, seen, principals):
+    for g in entries:
+        gid = entity_id("iam_group", g["Arn"])
+        attrs = {"name": g["GroupName"], "arn": g["Arn"], "inline_policies": _inline(g.get("GroupPolicyList")),
+                 "attached_policies": _attached(g.get("AttachedManagedPolicies"))}
+        if store.upsert_entity(gid, "iam_group", attrs, {}, SOURCE, at):
+            delta.entity(gid, "iam_group")
+        seen.add(gid)
+
+
+def _users(store, entries, at, delta, seen, principals):
+    for u in entries:
+        uid = entity_id("iam_user", u["Arn"])
+        attrs = {"name": u["UserName"], "arn": u["Arn"], "inline_policies": _inline(u.get("UserPolicyList")),
+                 "attached_policies": _attached(u.get("AttachedManagedPolicies")),
+                 "groups": sorted(u.get("GroupList", [])),
+                 "permissions_boundary": (u.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn")}
+        old = store.entity(uid)
+        if old:
+            attrs.update({k: old["attrs"][k] for k in DERIVED if k in old["attrs"]})
+        if store.upsert_entity(uid, "iam_user", attrs, {"tags": _tags(u.get("Tags"))}, SOURCE, at):
+            delta.entity(uid, "iam_user")
+        seen.add(uid)
+        principals.append(uid)
+
+
+# Parts of the IAM export beyond roles and policies, each with the code that reads it.
+SECTIONS = (("GroupDetailList", _groups), ("UserDetailList", _users))
+LABELS = {"UserDetailList": "IAM users", "GroupDetailList": "IAM groups"}
+
+
+def unread(iam, read):
+    """What the IAM export holds, or lacks, that the model does not read, for the source line."""
+    out = [f"{LABELS[k]} (not in the export)" for k in ("UserDetailList", "GroupDetailList") if k not in iam]
+    out += [f"{len(v)} {LABELS.get(k, k)}" for k, v in sorted(iam.items())
+            if k not in read and isinstance(v, list) and v]
+    users = len(iam.get("UserDetailList") or []) if "UserDetailList" in read else 0
+    if users:
+        out.append(f"access keys of {users} IAM user{'' if users == 1 else 's'} (not in this export)")
+    return out
 
 
 def apply(store, data, at):
@@ -123,7 +220,7 @@ def apply(store, data, at):
                                    if m["time"] >= at] if old else []
         # Keep the derived attrs from the last resolve so an unchanged role is not a change.
         if old:
-            for k in ("admin_wildcard", "unknown_policy_documents", "not_evaluated"):
+            for k in DERIVED:
                 if k in old["attrs"]:
                     attrs[k] = old["attrs"][k]
         # The attrs then describe the time of the newest change applied, as they would had
@@ -133,6 +230,12 @@ def apply(store, data, at):
             delta.entity(rid, "iam_role")
         seen_entities.add(rid)
         roles.append((rid, observed, "aws.cloudtrail" if pending else SOURCE))
+    read, users = {"RoleDetailList", "Policies"}, []
+    for key, section in SECTIONS:
+        if key in data["iam"]:
+            section(store, data["iam"][key], at, delta, seen_entities, users)
+            read.add(key)
+    store.set_setting(f"unread:{SOURCE}", json.dumps(unread(data["iam"], read)))
     gone_entities, gone_edges = store.sweep(SOURCE, seen_entities, keep_edges(store), at)
     for eid, etype in gone_entities:
         delta.entity(eid, etype)
@@ -140,6 +243,8 @@ def apply(store, data, at):
         delta.edge(etype)
     for rid, observed, source in roles:
         delta.merge(recompute_role(store, rid, observed, source))
+    for uid in users:
+        delta.merge(recompute_role(store, uid, at, SOURCE))
     return delta
 
 
@@ -149,7 +254,9 @@ def keep_edges(store):
 
 
 def recompute_role(store, rid, at, source):
-    """Rebuild one role's has_permission edges from the policies the model holds."""
+    """Rebuild one role's or user's has_permission edges from the policies the model holds.
+    A user's groups add their policies; a group the model does not hold is an unknown
+    document, so the user's permissions are marked not fully known."""
     delta = Delta()
     role = store.entity(rid)
     if role is None:
@@ -159,6 +266,15 @@ def recompute_role(store, rid, at, source):
     for arn in a.get("attached_policies", []):
         p = store.entity(entity_id("iam_policy", arn))
         pols.append((arn, p["attrs"].get("document") if p else None))
+    for name in a.get("groups") or []:
+        g = store.find_by_name("iam_group", name)
+        if g is None:
+            pols.append((f"group:{name}", None))
+            continue
+        pols += [(f"group:{name}:inline:{n}", d) for n, d in sorted((g["attrs"].get("inline_policies") or {}).items())]
+        for arn in g["attrs"].get("attached_policies") or []:
+            p = store.entity(entity_id("iam_policy", arn))
+            pols.append((f"group:{name}:{arn}", p["attrs"].get("document") if p else None))
     buckets = {b["attrs"]["name"]: b["id"] for b in store.entities("s3_bucket")}
     grants, markers, admin, unknown = policy.resolve(pols, sorted(buckets), bool(a.get("permissions_boundary")))
     keep = set()
@@ -174,7 +290,7 @@ def recompute_role(store, rid, at, source):
     derived = {"admin_wildcard": admin, "unknown_policy_documents": unknown, "not_evaluated": markers}
     if any(a.get(k) != v for k, v in derived.items()):
         store.set_attrs(rid, {**a, **derived})
-        delta.entity(rid, "iam_role")
+        delta.entity(rid, role["type"])
     return delta
 
 
