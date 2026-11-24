@@ -188,6 +188,12 @@ is read, and the role reads the bucket, which none of the agent's tools declares
 - A response plan uses a catalog of three actions and prints commands for a person to
   review. Nothing runs. `explain` and `ask` call a model through v1's `providers.py`;
   answers are joined by ID, and the model cannot open, close or change a finding.
+- `ask` sends the model the query language: each entity type with its attrs, and each
+  edge type with what it means and the two entity types it joins. When a query finds
+  nothing and one of its walk steps cannot match any live edge in the model, the answer
+  says "Not an answer" in place of "no rows" and names that step. After a step with no
+  target type, the check uses the types that the step's edges reach. So an empty answer
+  does not read as "none".
 - The IAM resolver reads Allow statements and wildcards only. Anything else (conditions,
   Deny, NotAction, boundaries, SCPs, bucket policies) is listed as not evaluated.
 
@@ -277,23 +283,43 @@ head -n 9 $F/events/chain.ndjson | .venv/bin/python -m codeguardian watch --db d
   --provider recorded --answer $F/explain-answer.json
 .venv/bin/python -m codeguardian ask --db demo.db --now 2026-11-14T10:30:00Z --question "Which roles can read sensitive buckets?" \
   --provider recorded --answer $F/ask-answer.json
+.venv/bin/python -m codeguardian ask --db demo.db --now 2026-11-14T10:30:00Z --question "Which roles can read sensitive buckets?" \
+  --provider recorded --answer $F/ask-answer-wrong-edge.json
 tail -n 1 $F/events/chain.ndjson | .venv/bin/python -m codeguardian watch --db demo.db --now 2026-11-14T10:30:00Z
 .venv/bin/python -m codeguardian findings --db demo.db --now 2026-11-14T10:30:00Z
 .venv/bin/python -m codeguardian bench --events 10000 --seed 7
 .venv/bin/python tests/mutants.py
 ```
 
-The two recorded model answers are written by hand. On 2026-11-23 both commands ran
-against a live model, `claude-sonnet-5-5`, on this fixture after the first `watch`
+The answers in `explain-answer.json` and `ask-answer.json` are written by hand.
+`ask-answer-wrong-edge.json` is a live model's answer, saved. On 2026-11-23 both commands
+ran against a live model, `claude-sonnet-5-5`, on this fixture after the first `watch`
 (incident `83db1215`, 7 findings). `explain` ran once. It explained all 7 findings,
 dropped no entry and changed no status. It named the planted instructions in the bucket
-tag, the pod annotation and the CloudTrail user agent, and ignored them. `ask` ran four
-times and failed each time. It turned "Which roles can read sensitive buckets?" into a
-query on the `reads` edge, which here joins only an AI tool to a bucket, and printed
-"no rows". The right answer is three roles, from the `has_permission` edges. The query
-language gives the model edge names but not their meanings, and an empty answer looks
-like "none". Until that is fixed, an empty `ask` answer proves nothing. The hand-written
-answer used the right edge, so no test caught the fault.
+tag, the pod annotation and the CloudTrail user agent, and ignored them.
+
+`ask` failed at first, four runs in four. The query language then gave edge names
+without their meanings. The model turned "Which roles can read sensitive buckets?" into a
+query on the `reads` edge, which joins only an AI tool to a bucket, and the answer was
+"no rows". The right answer is three roles, from the `has_permission` edges. With the
+edge meanings and their entity types in the language, the model chose `has_permission`
+four times in four, but it started from the roles, so it could not apply the bucket's
+`sensitive` filter and listed every bucket. Two more sentences in the prompt, on how a
+walk chains and what a row shows, gave the right three roles four times in four. Three
+other questions were then answered right once each: pods reachable from the internet,
+the roles the AI agents can use, and the buckets their tools declare. Before the sentence
+on chains, the first of these gave a query that could not match, and the answer said so.
+Seven questions on one fixture are a small sample. A wrong query can still give a wrong
+answer that is not empty, and no check here catches that.
+
+A review on 2026-11-24 gave `ask` inputs that the tests did not hold, on the recorded
+chain fixture, and found three faults. All three are fixed. A query that walked
+`exposes` with no target type and then `assumes` printed "no rows" and no warning, but
+no pod can take an `assumes` edge. The warning printed under a "- no rows" line; it now
+takes the place of that line. A C1 control character in the model's note or in a pod
+name reached the terminal (U+009B, which a terminal reads as ESC [); `safe()` now
+removes it. After the fixes, 317 tests pass, and the mutation run removes 240 controls:
+310 mutant-test pairs, all caught.
 
 The NetworkPolicy layout of a cluster used in the course, written by hand from the
 reference: namespace `shop` has a default-deny policy and an allow from namespaces
@@ -544,3 +570,7 @@ What was learned:
   changed four older tests: three listed every open path rule, and one expected a late
   alert's incident to hold that alert alone. An open finding on the alert's pod now joins
   that incident too.
+- A hand-written model answer tests the code around the model, not the prompt. The
+  recorded `ask` answer used the right edge. A live model given only edge names chose a
+  wrong one every time, and "no rows" read as "none". Telling the model what each edge
+  means, and making an empty answer say when the query could not match, fixed both.

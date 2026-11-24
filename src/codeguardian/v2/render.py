@@ -228,7 +228,15 @@ def answer(result):
     out = [f"Query (written by {safe(result.get('served_by') or 'no model')}, checked and run read-only):",
            safe(json.dumps(result["query"], sort_keys=True), 2000), f"Note: {safe(result.get('note', ''), 500)}", ""]
     out += [f"- {safe(r['id'], 300)}" + (f" (from {safe(r['from'], 300)})" if r["from"] != r["id"] else "")
-            for r in result["rows"]] or ["- no rows"]
+            for r in result["rows"]] or ([] if result.get("cannot_match") else ["- no rows"])
     if result["truncated"]:
         out.append("(stopped at the limit)")
+    gap = result.get("cannot_match")
+    if gap:
+        joins = gap["joins"]
+        ends = f"{safe(gap['edge'])} joins {safe(joins[0])} to {safe(joins[1])}" if joins \
+            else "no collector writes this edge yet"
+        out.append(f"Not an answer: the model holds no {safe(gap['edge'])} edge from {safe(gap['from'])} to"
+                   f" {safe(gap['to'])} ({ends}), so this query cannot find anything. An empty answer here"
+                   " does not mean none.")
     return "\n".join(out) + "\n"

@@ -12,12 +12,16 @@ document:
 "where" filters entities of the "find" type by their typed attrs (never labels).
 "related" walks edges from each match; the answer is the entities the walk reaches.
 Anything else in the document, or any unknown type, attr, op or edge, refuses the query.
+
+The language tells the model what each edge type means and which entity types it joins.
+An empty answer from a walk step that no edge in the model can take says nothing about
+the data, so the answer names that step instead of reading as "none".
 """
 
 import json
 
 from . import rules as R
-from .schema import EDGE_TYPES, ENTITY_TYPES
+from .schema import EDGE_MEANINGS, EDGE_TYPES, ENTITY_TYPES
 
 MAX_LIMIT = 100
 KEYS = {"find", "where", "related", "limit"}
@@ -49,7 +53,14 @@ ANSWER_SCHEMA = {"type": "object", "properties": {"query": QUERY_SCHEMA, "note":
 
 SYSTEM = """You translate a security analyst's question into one query for CodeGuardian.
 You do not see the data and you cannot run anything. Return JSON with the query and a short
-note on what it asks. Use only the entity types, attrs and edge types listed."""
+note on what it asks. Use only the entity types, attrs and edge types listed.
+The steps in "related" form one chain: each step starts from the entities the step before
+it reached, and the answer is where the last step ends. Each edge type joins the two
+entity types listed for it, in that direction: walk "out" from its "from" type and "in"
+from its "to" type. "where" filters only the "find" type, so start from the type whose
+attrs the question names. Each answer row shows the entity the walk reached and the "find"
+entity it started from, so a question about one type with a condition on another starts
+from the type with the condition and walks to the type asked about."""
 
 
 class QueryError(ValueError):
@@ -57,8 +68,12 @@ class QueryError(ValueError):
 
 
 def language():
+    edges = {}
+    for t in EDGE_TYPES:
+        means, ends = EDGE_MEANINGS[t]
+        edges[t] = {"means": means, "from": ends[0], "to": ends[1]} if ends else {"means": means}
     return json.dumps({"entity_types": {t: list(v[2]) for t, v in ENTITY_TYPES.items()},
-                       "edge_types": list(EDGE_TYPES), "ops": list(R.OPS), "max_limit": MAX_LIMIT}, indent=1)
+                       "edge_types": edges, "ops": list(R.OPS), "max_limit": MAX_LIMIT}, indent=1)
 
 
 def check_query(q):
@@ -95,8 +110,37 @@ def run(store, q):
         for rid in sorted(reached):
             rows.append({"from": e["id"], "id": rid})
             if len(rows) >= q["limit"]:
-                return {"query": q, "rows": rows, "truncated": True}
-    return {"query": q, "rows": rows, "truncated": False}
+                return {"query": q, "rows": rows, "truncated": True, "cannot_match": None}
+    gap = None
+    if not rows and q["related"]:
+        gap = cannot_match(store, q)
+    return {"query": q, "rows": rows, "truncated": False, "cannot_match": gap}
+
+
+def cannot_match(store, q):
+    """The first walk step that no live edge in the model can take from the types the walk
+    is at, or None. A query with such a step finds nothing whatever the data holds. The
+    walk starts at the "find" type. After a step with no "to", it is at the types that
+    step's edges reach in the model, not at any type: a pod reached through exposes cannot
+    take an assumes edge, whatever other entities can."""
+    at = {q["find"]}
+    for s in q["related"]:
+        etype, to = s["edge"], s.get("to")
+        near, far = ("src", "dst") if s["dir"] == "out" else ("dst", "src")
+        reached = set()
+        for e in store.edges(etype=etype):
+            a, b = store.entity(e[near]), store.entity(e[far])
+            if a is None or b is None:
+                continue
+            if a["type"] in at and (to is None or b["type"] == to):
+                reached.add(b["type"])
+        if not reached:
+            here = " or ".join(sorted(at))
+            src, dst = (here, to) if s["dir"] == "out" else (to, here)
+            return {"edge": etype, "from": src or "any type", "to": dst or "any type",
+                    "joins": EDGE_MEANINGS[etype][1]}
+        at = reached
+    return None
 
 
 def ask(store, question, provider):
