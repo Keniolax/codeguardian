@@ -419,6 +419,18 @@ own data, not by when it arrives.
   each export, and `findings --history` replays all of it on each call. A held record
   whose actor never appears stays held and is checked again after every snapshot.
 
+A review on 2026-11-25 sent snapshots again on inputs that the tests did not hold, on the
+recorded fixtures. The notes held for each one: three collectors not current in one
+`ingest`, two reasons for one collector, another collector failing in the same `ingest`,
+and a pod name with a newline, escape codes and markup in the error text. Five checks
+behind the notes had no test; each has one now. The review fixed one fault: `ingest
+--help` named the exit codes 0, 2 and 3, but `ingest` exits 1 when it refuses its options
+and 2 when it cannot parse the command line. The help now names both. One gap is open.
+`ingest` applies a new snapshot that is older than a failed export, or already past its
+refresh period, and exits 0 with no note, while `findings` then says FAILED or STALE.
+After the fixes, 393 tests pass (107 for v1, 286 for v2), and the mutation run removes
+362 controls: 549 mutant-test pairs, all caught.
+
 After the commands above, print the history, then give `ingest` an AWS export older than
 the one it holds:
 
