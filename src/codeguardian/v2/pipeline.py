@@ -8,8 +8,9 @@ run the detection rules for its action, and correlate what opened.
 Records arrive out of order, so each input is ordered by the time in its data:
 
 - A snapshot older than the last one applied from the same collector is refused and
-  changes nothing. At the same time, the same content is a no-op and other content is
-  refused and marked.
+  changes nothing, even one that was applied before a newer one came. The last one
+  applied, sent again, is a no-op. Other content at the time of a snapshot already
+  taken is refused and marked.
 - An IAM change record older than the snapshot that last confirmed its role is history;
   one for a role the model does not hold yet waits for a snapshot that brings the role.
 - A detection that cannot be evaluated yet is held, and decided after the next snapshot.
@@ -111,17 +112,23 @@ class Pipeline:
 
     def _admit(self, source, at, content):
         """Whether a snapshot may change the model: apply, unchanged, older or conflict.
-        Every snapshot that is not a repeat goes into the journal."""
+
+        A repeat is the last snapshot applied, sent again. A snapshot applied before a newer
+        one is older now and is refused like any older one, though the journal holds its
+        exact content: the model no longer holds it, so "unchanged" would tell a script its
+        old export is current. The journal keeps one entry per snapshot (source, time and
+        digest), so that refusal adds none, and every other snapshot that is not a repeat
+        goes into it."""
         d = digest(content)
         same_time = self.store.snapshot_entries(source, at)
-        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):
+        health = self.store.source(source)
+        last = health["last_success"] if health else None
+        if at == last and any(e["digest"] == d and e["status"] == "applied" for e in same_time):
             self.store.bump("snapshot_unchanged")
             return "unchanged", None
         # A snapshot refused before is refused again for the same reason: it is not in the
         # model, so it must not read as a repeat of one that is.
         others = [e for e in same_time if e["digest"] != d]
-        health = self.store.source(source)
-        last = health["last_success"] if health else None
         if others or (last is not None and at == last):
             # Two different snapshots of one collector at one time: which one holds is unknown.
             verdict, reason = "conflict", (f"differs from the snapshot of {source} already taken at {at};"

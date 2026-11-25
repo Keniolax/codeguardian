@@ -309,8 +309,11 @@ def test_snapshot_time_is_normalised_so_string_order_is_time_order(tmp_path):
     r = pipe.snapshot(ai=FX / "ai" / "inventory.json", at="2026-11-14T10:10:00.5Z")
     assert r["refused"] == [] and r["unchanged"] == []
     assert store.source("ai.inventory")["last_success"] == "2026-11-14T10:10:00.500000Z"
-    # Control: the earlier time again is the same snapshot, a no-op.
-    assert pipe.snapshot(ai=FX / "ai" / "inventory.json", at="2026-11-14T10:10:00Z")["unchanged"] == ["ai.inventory"]
+    # Control: the earlier time again is older than the snapshot the model holds now, so
+    # it is refused, though the journal holds the same content at that time.
+    r = pipe.snapshot(ai=FX / "ai" / "inventory.json", at="2026-11-14T10:10:00Z")
+    assert r["unchanged"] == [] and [x[:2] for x in r["refused"]] == [("ai.inventory", "older")]
+    assert store.source("ai.inventory")["last_success"] == "2026-11-14T10:10:00.500000Z"
 
 
 def test_ingest_says_a_snapshot_was_refused_and_exits_3(tmp_path, capsys):
@@ -356,6 +359,78 @@ def test_a_refused_snapshot_sent_again_is_refused_again(tmp_path, capsys):
     capsys.readouterr()
     assert cli(["ingest", "--db", db, "--now", NOW, "--at", LATER_AT, *aws]) == 0
     assert "aws.state: this snapshot is already in the model; nothing changed" in capsys.readouterr().out
+
+
+# --- slice snapshot-repeat: only the last snapshot applied is a repeat ------------------------------
+
+COURSE = FX.parent / "netpol" / "shop.json"  # the course layout: the shop's two policies deny the outsider
+COURSE_NO_POLICY = FX.parent / "netpol" / "shop-no-policy.json"  # the same layout without them
+NO_POLICY_AT = "2026-11-14T10:00:00Z"
+
+
+def test_snapshot_applied_before_a_newer_one_is_refused_as_older_when_sent_again(tmp_path, capsys):
+    db = str(tmp_path / "course.db")
+
+    def ingest(path, at):
+        code = cli(["ingest", "--db", db, "--now", NOW, "--at", at, "--cluster", "course", "--k8s", str(path)])
+        return code, capsys.readouterr()
+
+    def reach():
+        code = cli(["reach", "--db", db, "--now", NOW, "--from", "outsider/outsider-2f9a",
+                    "--to", "shop/shop-web-5d8f", "--port", "3000"])
+        capsys.readouterr()
+        return code
+
+    assert ingest(COURSE, SNAPSHOT_AT)[0] == 0
+    assert reach() == 1  # denied at 09:55
+    assert ingest(COURSE_NO_POLICY, NO_POLICY_AT)[0] == 0
+    assert reach() == 0  # allowed at 10:00
+    store = Store(db)
+    before, sources, journal, hist = _tables(store), store.sources(), store.snapshots(), changes_of(store)
+    assert [(s["at"], s["status"]) for s in journal] == [("2026-11-14T09:55:00.000000Z", "applied"),
+                                                         ("2026-11-14T10:00:00.000000Z", "applied")]
+    # The 09:55 export again. The journal holds its exact content, applied, but the model
+    # holds 10:00 now. Exit 0 would tell a script that its 09:55 export is current.
+    code, out = ingest(COURSE, SNAPSHOT_AT)
+    assert code == 3 and "already in the model" not in out.out
+    assert out.err == ("snapshot refused: k8s.state: is older than the last applied snapshot of k8s.state, taken at"
+                       " 2026-11-14T10:00:00.000000Z; nothing changed\n")
+    store = Store(db)
+    assert _tables(store) == before and store.sources() == sources and changes_of(store) == hist
+    assert store.snapshots() == journal  # one entry per snapshot: 09:55 stays applied, none is added
+    assert store.counters()["snapshot_older"] == 1 and "snapshot_unchanged" not in store.counters()
+    assert "Snapshots refused" not in render.findings(store, NOW)
+    assert reach() == 0  # still the 10:00 answer
+    # Control: the 10:00 snapshot, the last one applied, sent again is a repeat. Exit 0.
+    code, out = ingest(COURSE_NO_POLICY, NO_POLICY_AT)
+    assert code == 0 and out.err == ""
+    assert "k8s.state: this snapshot is already in the model; nothing changed" in out.out
+    store = Store(db)
+    assert _tables(store) == before and store.snapshots() == journal
+    assert store.counters()["snapshot_unchanged"] == 1
+
+
+def test_other_content_at_an_older_snapshots_time_is_still_a_conflict(tmp_path):
+    store, pipe = fresh()
+    pipe.snapshot(aws=(FX / "aws" / "iam.json", BUCKETS, TAGS), at=SNAPSHOT_AT)
+    pipe.snapshot(aws=(later_iam(tmp_path), BUCKETS, TAGS), at=LATER_AT)
+    before, hist = _tables(store), changes_of(store)
+    # Older than the model, and at the time of a snapshot the journal holds with other
+    # content. Which of the two held at 09:55 is not known, so it is a conflict: marked,
+    # and kept out of the history, which would otherwise pick one of the two.
+    other = later_iam(tmp_path)  # the 10:15 content, which differs from the 09:55 one
+    r = pipe.snapshot(aws=(other, BUCKETS, TAGS), at=SNAPSHOT_AT)
+    assert [x[:2] for x in r["refused"]] == [("aws.state", "conflict")]
+    assert sorted(s["status"] for s in store.snapshots()) == ["applied", "applied", "conflict"]
+    assert _tables(store) == before and changes_of(store) == hist
+    assert "aws.state taken at 2026-11-14T09:55:00.000000Z: refused, another snapshot" in render.findings(store, NOW)
+    # Control: the same content at an older time the journal does not hold is older, and
+    # the history replays it: the admin role's finding now opens at 09:50.
+    r = pipe.snapshot(aws=(other, BUCKETS, TAGS), at="2026-11-14T09:50:00Z")
+    assert [x[:2] for x in r["refused"]] == [("aws.state", "older")]
+    assert _tables(store) == before
+    assert [v[1][0][:2] for v in hist.values()] == [("2026-11-14T09:55:00.000000Z", "opened")]
+    assert [v[1][0][:2] for v in changes_of(store).values()] == [("2026-11-14T09:50:00.000000Z", "opened")]
 
 
 # --- records that arrive before what they need ----------------------------------------------------

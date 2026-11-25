@@ -106,6 +106,8 @@ BROKEN_OLDER = "test_broken_snapshot_older_than_the_last_good_one_changes_nothin
 AT_EITHER = "test_record_at_a_snapshots_time_counts_after_it_whichever_arrives_first"
 NEWER_FAILURE = "test_newer_failed_export_still_stands_when_an_older_snapshot_arrives_after_it"
 REFUSED_AGAIN = "test_a_refused_snapshot_sent_again_is_refused_again"
+REPEAT = "test_snapshot_applied_before_a_newer_one_is_refused_as_older_when_sent_again"
+OLDER_CONFLICT = "test_other_content_at_an_older_snapshots_time_is_still_a_conflict"
 
 
 MUTANTS = [
@@ -1029,19 +1031,19 @@ MUTANTS = [
      [T("test_findings_remove_characters_that_are_not_printable", SHADOW), T(FORGE, SHADOW)]),
     # Order (slice snapshot-order): each guard that keeps arrival order out of the model.
     ("snapshot older than the last applied one accepted", PL, "        elif last is not None and at < last:",
-     "        elif False:", [T(OLDER, ORDER), T(PER_SOURCE, ORDER), T(EVERY_ORDER, ORDER)]),
+     "        elif False:", [T(OLDER, ORDER), T(PER_SOURCE, ORDER), T(EVERY_ORDER, ORDER), T(REPEAT, ORDER)]),
     ("repeated snapshot not recognised", PL,
-     '        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):\n'
+     '        if at == last and any(e["digest"] == d and e["status"] == "applied" for e in same_time):\n'
      '            self.store.bump("snapshot_unchanged")\n',
-     "        if False:\n", [T(REPLAY, ORDER), T(SAME_TIME, ORDER), T(NORMALISED, ORDER), T(INGEST, ORDER)]),
+     "        if False:\n", [T(REPLAY, ORDER), T(SAME_TIME, ORDER), T(INGEST, ORDER), T(REPEAT, ORDER)]),
     ("other content at the same time applied", PL, "        if others or (last is not None and at == last):",
      "        if False:", [T(SAME_TIME, ORDER), T(REPLAY, ORDER)]),
     # Review of slice 2: controls that had no test, and the faults it fixed.
     ("other content at the last applied time applied when the journal lacks it", PL,
      "        if others or (last is not None and at == last):", "        if others:", [T(SAME_TIME, ORDER)]),
     ("a refused snapshot sent again reads as already in the model", PL,
-     '        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):',
-     '        if any(e["digest"] == d for e in same_time):', [T(REFUSED_AGAIN, ORDER), T(REPLAY, ORDER)]),
+     '        if at == last and any(e["digest"] == d and e["status"] == "applied" for e in same_time):',
+     '        if at == last and any(e["digest"] == d for e in same_time):', [T(REFUSED_AGAIN, ORDER)]),
     ("a refused snapshot sent again conflicts with itself", PL,
      '        others = [e for e in same_time if e["digest"] != d]', "        others = same_time",
      [T(REFUSED_AGAIN, ORDER)]),
@@ -1154,6 +1156,14 @@ MUTANTS = [
     ("findings --history ignored", V2 + "cli.py", "        if a.history:", "        if False:", [T(HIST_OUT, ORDER)]),
     ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 3 if refused else 0", "    return 0",
      [T(INGEST, ORDER)]),
+    # Slice snapshot-repeat: only the last snapshot applied is a repeat.
+    ("a snapshot applied before a newer one reads as a repeat when sent again", PL,
+     "        if at == last and any(", "        if any(", [T(REPEAT, ORDER), T(NORMALISED, ORDER)]),
+    ("refusing a snapshot applied before rewrites its journal entry as refused", V2 + "store.py",
+     "INSERT OR IGNORE INTO snapshots", "INSERT OR REPLACE INTO snapshots", [T(REPEAT, ORDER)]),
+    ("other content at an older snapshot's time refused as older, not as a conflict", PL,
+     "        if others or (last is not None and at == last):",
+     "        if (others and at >= (last or at)) or (last is not None and at == last):", [T(OLDER_CONFLICT, ORDER)]),
     ("unknown option of a command ignored", "src/codeguardian/cli.py",
      '        ap.error(f"unrecognized arguments: {\' \'.join(extra)}")', "        pass",
      [T("test_unknown_option_of_a_command_is_refused_with_exit_2", CORE)]),
