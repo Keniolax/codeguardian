@@ -195,6 +195,16 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   says "Not an answer" in place of "no rows" and names that step. After a step with no
   target type, the check uses the types that the step's edges reach. So an empty answer
   does not read as "none".
+- `ask` also names each source that its answer rests on and that is not current: the
+  source never ran, its last run failed, its last good run is older than its refresh
+  period, or a snapshot of it was refused as a conflict. An answer rests on the sources of
+  the query's own type, of each edge it walks, and of the types each step reaches. A
+  filter on a service account's `irsa_status` also rests on the AWS source, because that
+  attr comes from the IAM roles. The note uses the words of `findings`, as `reach` does,
+  and `ask` exits 2. So "no rows" from an AI inventory that never ran does not read as "no
+  agents". Exit 0 means an answer from current sources. Exit 2 means no answer to act on:
+  the model call failed, the query was refused, it cannot match anything ("Not an
+  answer"), or a note was printed.
 - The IAM resolver reads Allow statements and wildcards only. Anything else (conditions,
   Deny, NotAction, boundaries, SCPs, bucket policies) is listed as not evaluated.
 - IAM users and groups come from the same export. A user's permissions are its own
@@ -331,6 +341,19 @@ takes the place of that line. A C1 control character in the model's note or in a
 name reached the terminal (U+009B, which a terminal reads as ESC [); `safe()` now
 removes it. After the fixes, 317 tests pass, and the mutation run removes 240 controls:
 310 mutant-test pairs, all caught.
+
+A review on 2026-11-25 tried the source notes of `ask` on inputs that the tests did not
+hold, on the recorded fixtures, and found two faults. Both are fixed. A filter on a service
+account's `irsa_status` rested on the Kubernetes source only, but the pipeline computes
+that attr from the IAM roles. With no AWS export, a query for "trust verified" answered
+"no rows" with exit 0. After a failed AWS export it answered from the old roles with no
+note. A model call that failed, or a saved answer that could not be read, exited 1 with a
+Python traceback. It now prints "no answer" and the reason, escaped, and exits 2. One gap
+is open. A filter on an attr whose value the model does not know leaves that entity out:
+with the tags of one bucket unreadable, `findings` opens `POST-S3-001` for it, but a query
+for sensitive buckets answers "no rows" with exit 0. After the fixes, 391 tests pass (107
+for v1, 284 for v2), and the mutation run removes 363 controls: 534 mutant-test pairs,
+all caught.
 
 The NetworkPolicy layout of a cluster used in the course, written by hand from the
 reference: namespace `shop` has a default-deny policy and an allow from namespaces

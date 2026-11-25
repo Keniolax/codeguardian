@@ -78,6 +78,32 @@ EDGE_SOURCES = {
     "has_permission": ("aws.state",),
 }
 
+# entity type -> the collectors whose snapshots write it. The internet node is built in, so
+# it rests on none. ask names a source its answer rests on that is not current.
+TYPE_SOURCES = {
+    "internet": (),
+    "s3_bucket": ("aws.state",),
+    "iam_role": ("aws.state",),
+    "iam_policy": ("aws.state",),
+    "iam_user": ("aws.state",),
+    "iam_group": ("aws.state",),
+    "service": ("k8s.state",),
+    "pod": ("k8s.state",),
+    "network_policy": ("k8s.state",),
+    "namespace": ("k8s.state",),
+    "service_account": ("k8s.state",),
+    "agent": ("ai.inventory",),
+    "model_endpoint": ("ai.inventory",),
+    "tool": ("ai.inventory",),
+}
+
+# (entity type, attr) -> the other collectors whose facts the pipeline computes the attr
+# from. irsa_status says whether the IAM role a service account names exists and trusts
+# it, so a filter on it rests on the AWS collector as well as on the k8s one.
+ATTR_SOURCES = {
+    ("service_account", "irsa_status"): ("aws.state",),
+}
+
 EVENT_SOURCES = {
     "aws.cloudtrail": "cloud",
     "k8s.audit": "kubernetes",

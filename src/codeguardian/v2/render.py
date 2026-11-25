@@ -67,6 +67,22 @@ def source_status(name, s, now):
     return f"source {name}: ok, last good run {s['last_success']}", True
 
 
+def not_current(store, source, now):
+    """Why the model's facts from one collector may not hold now, one line per reason in
+    the words `findings` uses: it never ran, its last run failed, its last good run is
+    older than its refresh period, or a snapshot taken at or after that run was refused as
+    a conflict. An empty list means they hold. A conflict older than the snapshot the model
+    holds is history."""
+    s = store.source(source)
+    line, current = source_status(source, s, now)
+    held = [] if current else [line]
+    last = (s or {}).get("last_success") or ""
+    for r in store.snapshots(statuses=("conflict",)):
+        if r["source"] == source and r["at"] >= last:
+            held.append(refused_line(r))
+    return held
+
+
 def sources(store, now):
     """Every collector, including one that never ran or has not run lately: a source
     with no recent good run means the findings do not cover it."""
