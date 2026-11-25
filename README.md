@@ -195,6 +195,14 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   says "Not an answer" in place of "no rows" and names that step. After a step with no
   target type, the check uses the types that the step's edges reach. So an empty answer
   does not read as "none".
+- `ask` also names each source that its answer rests on and that is not current: the
+  source never ran, its last run failed, its last good run is older than its refresh
+  period, or a snapshot of it was refused as a conflict. An answer rests on the sources of
+  the query's own type, of each edge it walks, and of the types each step reaches. The
+  note uses the words of `findings`, as `reach` does, and `ask` exits 2. So "no rows" from
+  an AI inventory that never ran does not read as "no agents". Exit 0 means an answer from
+  current sources. Exit 2 means no answer to act on: the query was refused, or a note was
+  printed.
 - The IAM resolver reads Allow statements and wildcards only. Anything else (conditions,
   Deny, NotAction, boundaries, SCPs, bucket policies) is listed as not evaluated.
 - IAM users and groups come from the same export. A user's permissions are its own

@@ -15,13 +15,15 @@ Anything else in the document, or any unknown type, attr, op or edge, refuses th
 
 The language tells the model what each edge type means and which entity types it joins.
 An empty answer from a walk step that no edge in the model can take says nothing about
-the data, so the answer names that step instead of reading as "none".
+the data, so the answer names that step instead of reading as "none". An answer also rests
+on the collectors that write the types and edges the query names; `sources` lists them, so
+the command can say when one of them is not current.
 """
 
 import json
 
 from . import rules as R
-from .schema import EDGE_MEANINGS, EDGE_TYPES, ENTITY_TYPES
+from .schema import EDGE_MEANINGS, EDGE_SOURCES, EDGE_TYPES, ENTITY_TYPES, TYPE_SOURCES
 
 MAX_LIMIT = 100
 KEYS = {"find", "where", "related", "limit"}
@@ -147,6 +149,23 @@ def cannot_match(store, q):
                     "joins": EDGE_MEANINGS[etype][1]}
         at = reached
     return None
+
+
+def sources(q):
+    """The collectors an answer to a checked query rests on: those that write the "find"
+    type, each walked edge, and the types at the far end of each step (its "to" type, or
+    without one every type the edge joins at that end), in the order `findings` lists them."""
+    from .render import COLLECTORS
+
+    names = set(TYPE_SOURCES[q["find"]])
+    for s in q["related"]:
+        names.update(EDGE_SOURCES.get(s["edge"], ()))
+        pairs = EDGE_MEANINGS[s["edge"]][1] or ()
+        far = [s["to"]] if s.get("to") else [p[1] if s["dir"] == "out" else p[0] for p in pairs]
+        for t in far:
+            names.update(TYPE_SOURCES[t])
+    order = {n: i for i, n in enumerate(COLLECTORS)}
+    return sorted(names, key=lambda n: (order.get(n, len(order)), n))
 
 
 def ask(store, question, provider):

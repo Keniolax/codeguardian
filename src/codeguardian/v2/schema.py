@@ -78,6 +78,25 @@ EDGE_SOURCES = {
     "has_permission": ("aws.state",),
 }
 
+# entity type -> the collectors whose snapshots write it. The internet node is built in, so
+# it rests on none. ask names a source its answer rests on that is not current.
+TYPE_SOURCES = {
+    "internet": (),
+    "s3_bucket": ("aws.state",),
+    "iam_role": ("aws.state",),
+    "iam_policy": ("aws.state",),
+    "iam_user": ("aws.state",),
+    "iam_group": ("aws.state",),
+    "service": ("k8s.state",),
+    "pod": ("k8s.state",),
+    "network_policy": ("k8s.state",),
+    "namespace": ("k8s.state",),
+    "service_account": ("k8s.state",),
+    "agent": ("ai.inventory",),
+    "model_endpoint": ("ai.inventory",),
+    "tool": ("ai.inventory",),
+}
+
 EVENT_SOURCES = {
     "aws.cloudtrail": "cloud",
     "k8s.audit": "kubernetes",

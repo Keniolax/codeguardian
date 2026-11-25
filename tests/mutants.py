@@ -7,10 +7,10 @@ each named test on its own, and restores the file. A mutant counts as caught onl
 pytest exits with code 1 (tests failed). Exit code 2 or more means the mutant broke
 collection or imports, which proves nothing, so it is reported as broken. The run fails
 if any mutant survives or breaks, if the tree is not clean afterwards, or if a test whose
-name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy, -NP, order or
-IAM user files, has no mutant, or any test in the ask file after the three named in
-ASK_BEFORE_2C. In the NetworkPolicy, -NP, order and IAM user files every parametrized case
-must also have a mutant of its own.
+name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy, -NP, order,
+IAM user or source files, has no mutant, or any test in the ask file after the three named
+in ASK_BEFORE_2C. In the NetworkPolicy, -NP, order, IAM user and source files every
+parametrized case must also have a mutant of its own.
 
 The reviewer's week 17 mutants live in tests/mutants_week17.py, which is frozen with the
 reviewer; this file runs them after its own.
@@ -42,6 +42,14 @@ ORDER = "tests/test_v2_order.py"
 PL = V2 + "pipeline.py"
 HIST = V2 + "history.py"
 USERS = "tests/test_v2_users.py"
+SOURCES = "tests/test_v2_sources.py"
+ASKS = V2 + "ask.py"
+ASK_NEVER_RAN = "test_ask_on_a_collector_that_never_ran_notes_it_and_exits_2"
+ASK_NOT_CURRENT = "test_ask_notes_a_failed_stale_or_conflicting_source_it_rests_on_and_exits_2"
+ASK_FORGE = "test_ask_note_and_findings_on_a_failed_source_cannot_forge_a_line"
+ASK_REFUSED = "test_ask_refused_query_exits_2_with_nothing_on_stdout_even_from_a_failed_source"
+RESTS_ON = "test_an_answer_rests_on_the_find_type_each_edge_and_each_step_end"
+TYPE_SRC = "test_type_sources_name_the_collector_of_every_entity_and_edge_in_the_models"
 AWS = V2 + "collectors/aws.py"
 
 
@@ -559,11 +567,12 @@ MUTANTS = [
     ("source that never ran shown as ok", V2 + "render.py",
      '    if s is None:\n        return f"source {name}: NEVER RUN.',
      '    if s is None:\n        return f"source {name}: ok", True\n        return f"source {name}: NEVER RUN.',
-     [T("test_first_run_failure_reports_failed_not_empty", CORE)]),
+     [T("test_first_run_failure_reports_failed_not_empty", CORE), T(ASK_NEVER_RAN, SOURCES)]),
     ("source past its refresh period shown as ok", V2 + "render.py",
      '    elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:',
      '    elif False:',
-     [T("test_source_past_its_refresh_period_is_shown_stale", CORE), T(f"{NOT_CURRENT}[stale]", SHADOW)]),
+     [T("test_source_past_its_refresh_period_is_shown_stale", CORE), T(f"{NOT_CURRENT}[stale]", SHADOW),
+      T(f"{ASK_NOT_CURRENT}[stale]", SOURCES)]),
     # Export: read-only, and missing knowledge is not safe.
     ("export runs commands that are not on the read-only list", EXPORT,
      "    if not allowed(argv):", "    if False:",
@@ -966,22 +975,22 @@ MUTANTS = [
      '    except Exception as exc:  # any failure is "no answer", never an answer',
      "    except ZeroDivisionError as exc:", [T("test_reach_exits_3_when_the_model_cannot_be_read", SHADOW)]),
     # reach from Kubernetes facts that may not hold now (review of 2026-11-24, fix 1).
-    ("reach ignores a failed, stale or conflicting k8s source", CLI, "        held = _k8s_not_current(store, clock.now())",
+    ("reach ignores a failed, stale or conflicting k8s source", CLI, "        held = not_current(store, K8S, clock.now())",
      "        held = []", [T(f"{NOT_CURRENT}[{c}]", SHADOW) for c in NOT_CURRENT_CASES] + [T(FORGE, SHADOW),
                                                                                      T(OTHER_CONFLICT, SHADOW)]),
     ("reach notes the source but keeps the answer's exit code", CLI,
      '    return REACH_EXIT["not evaluated"] if held and code != NO_ANSWER else code', "    return code",
      [T(f"{NOT_CURRENT}[{c}]", SHADOW) for c in NOT_CURRENT_CASES] + [T(FORGE, SHADOW), T(OTHER_CONFLICT, SHADOW)]),
     ("a failed source reads as current", V2 + "render.py", '    elif s["status"] != "ok":', "    elif False:",
-     [T(f"{NOT_CURRENT}[failed]", SHADOW), T(FORGE, SHADOW)]),
-    ("a conflict at the time of the model's snapshot not noted", CLI,
-     '        if r["source"] == SOURCE and r["at"] >= last:', "        if False:",
-     [T(f"{NOT_CURRENT}[conflict]", SHADOW), T(OTHER_CONFLICT, SHADOW)]),
-    ("a conflict older than the model's snapshot still noted", CLI,
-     '        if r["source"] == SOURCE and r["at"] >= last:', '        if r["source"] == SOURCE:',
+     [T(f"{NOT_CURRENT}[failed]", SHADOW), T(FORGE, SHADOW), T(f"{ASK_NOT_CURRENT}[failed]", SOURCES)]),
+    ("a conflict at the time of the model's snapshot not noted", V2 + "render.py",
+     '        if r["source"] == source and r["at"] >= last:', "        if False:",
+     [T(f"{NOT_CURRENT}[conflict]", SHADOW), T(OTHER_CONFLICT, SHADOW), T(f"{ASK_NOT_CURRENT}[conflict]", SOURCES)]),
+    ("a conflict older than the model's snapshot still noted", V2 + "render.py",
+     '        if r["source"] == source and r["at"] >= last:', '        if r["source"] == source:',
      [T(f"{NOT_CURRENT}[conflict]", SHADOW)]),
-    ("a conflict of another source noted for k8s", CLI,
-     '        if r["source"] == SOURCE and r["at"] >= last:', '        if r["at"] >= last:',
+    ("a conflict of another source noted for k8s", V2 + "render.py",
+     '        if r["source"] == source and r["at"] >= last:', '        if r["at"] >= last:',
      [T(OTHER_CONFLICT, SHADOW)]),
     # The -NP loader on rules written in the test (review of 2026-11-23, R1 to R6; fixes 3 to 6).
     ("path rule notes not checked (R1)", RULES,
@@ -1009,7 +1018,7 @@ MUTANTS = [
     ("reach usage printed on stdout, the answer channel (O7)", CLI, "        parser.print_usage(sys.stderr)",
      "        parser.print_usage(sys.stdout)", [T("test_reach_usage_errors_exit_3_not_2", SHADOW)]),
     ("a failed source's error printed unescaped (O8)", V2 + "render.py", "{safe(s['error'] or '')}",
-     "{s['error'] or ''}", [T(FORGE, SHADOW)]),
+     "{s['error'] or ''}", [T(FORGE, SHADOW), T(ASK_FORGE, SOURCES)]),
     ("reach prints pod names unescaped (O9)", CLI, 'print(f"{answer}: {term(a.src)} -> {term(a.dst)}',
      'print(f"{answer}: {a.src} -> {a.dst}', [T("test_reach_escapes_the_pod_names_it_prints", SHADOW)]),
     ("a snapshot exactly one refresh period old read as stale (O12)", V2 + "render.py",
@@ -1157,6 +1166,42 @@ MUTANTS = [
     ("unknown option of a command ignored", "src/codeguardian/cli.py",
      '        ap.error(f"unrecognized arguments: {\' \'.join(extra)}")', "        pass",
      [T("test_unknown_option_of_a_command_is_refused_with_exit_2", CORE)]),
+    # ask names a source its answer rests on that is not current (slice 2e).
+    ("ask rests on no collector of the find type", ASKS, '    names = set(TYPE_SOURCES[q["find"]])',
+     "    names = set()", [T(ASK_NEVER_RAN, SOURCES), T(RESTS_ON, SOURCES)]),
+    ("ask ignores the collectors of a walked edge", ASKS, '        names.update(EDGE_SOURCES.get(s["edge"], ()))',
+     "        pass", [T(RESTS_ON, SOURCES)]),
+    ("ask ignores a step's own to type", ASKS, '        far = [s["to"]] if s.get("to") else',
+     "        far = [] if s.get(\"to\") else", [T(RESTS_ON, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES]),
+    ("ask takes the edge's end types in place of a step's to", ASKS, '        far = [s["to"]] if s.get("to") else',
+     "        far = [p[1] if s[\"dir\"] == \"out\" else p[0] for p in pairs] if False else", [T(RESTS_ON, SOURCES)]),
+    ("ask ignores the far end of a step with no to", ASKS,
+     '[p[1] if s["dir"] == "out" else p[0] for p in pairs]', "[]", [T(RESTS_ON, SOURCES)]),
+    ("ask reads the far end of a step at the near end", ASKS,
+     '[p[1] if s["dir"] == "out" else p[0] for p in pairs]', '[p[0] if s["dir"] == "out" else p[1] for p in pairs]',
+     [T(RESTS_ON, SOURCES)]),
+    ("ask lists sources in name order, not the order findings uses", ASKS,
+     "    return sorted(names, key=lambda n: (order.get(n, len(order)), n))", "    return sorted(names)",
+     [T(RESTS_ON, SOURCES)]),
+    ("TYPE_SOURCES puts pods in the AI inventory", V2 + "schema.py", '    "pod": ("k8s.state",),',
+     '    "pod": ("ai.inventory",),', [T(TYPE_SRC, SOURCES)]),
+    ("TYPE_SOURCES leaves out a type", V2 + "schema.py", '    "iam_group": ("aws.state",),\n', "",
+     [T(TYPE_SRC, SOURCES)]),
+    ("ask ignores sources that are not current", CLI,
+     '        held = [line for name in sources(result["query"]) for line in not_current(store, name, clock.now())]',
+     "        held = []", [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES), T(ASK_REFUSED, SOURCES)]),
+    ("ask checks every collector, not those the answer rests on", CLI,
+     'for name in sources(result["query"]) for line', 'for name in ("aws.state", "k8s.state", "ai.inventory") for line',
+     [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES]),
+    ("ask notes a source but exits 0", CLI, "        return 2 if held else 0", "        return 0",
+     [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES), T(ASK_REFUSED, SOURCES)]),
+    ("ask exits 2 with no note", CLI, '            print(f"note: {term(line)}")', "            pass",
+     [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES)]),
+    ("ask notes a source without saying the answer is not evaluated", CLI,
+     '            print("note: the answer below rests on facts that may not hold now, so it counts as not evaluated")',
+     "            pass", [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES)]),
+    ("a refused query exits 0", CLI, '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 2',
+     '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 0', [T(ASK_REFUSED, SOURCES)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 
@@ -1173,12 +1218,13 @@ ASK_BEFORE_2C = {"test_ask_runs_a_valid_query_read_only", "test_ask_query_langua
 
 
 def chain_tests():
-    """Tests that must each have a mutant: A to F in the chain file, every export, NetworkPolicy
-    and order test, and every ask test since slice 2c."""
+    """Tests that must each have a mutant: A to F in the chain file, every export, NetworkPolicy,
+    order, IAM user and source test, and every ask test since slice 2c."""
     out = []
     for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True),
                        (NET, lambda n: True), (SHADOW, lambda n: True), (ORDER, lambda n: True),
-                       (ASK, lambda n: n not in ASK_BEFORE_2C), (USERS, lambda n: True)):
+                       (ASK, lambda n: n not in ASK_BEFORE_2C), (USERS, lambda n: True),
+                       (SOURCES, lambda n: True)):
         tree = ast.parse((ROOT / file).read_text())
         out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name.startswith("test_") and keep(n.name)]
@@ -1204,11 +1250,11 @@ def main():
     named = {node for *_, tests in MUTANTS for node in tests}
     env = dict(os.environ, PYTHONPATH="src", PYTHONDONTWRITEBYTECODE="1")
     collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN,
-                                NET, SHADOW, ORDER, USERS], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
-    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW, ORDER, USERS)) and n not in named]
+                                NET, SHADOW, ORDER, USERS, SOURCES], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
+    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW, ORDER, USERS, SOURCES)) and n not in named]
     for n in loose:
         print(f"parametrized case with no mutant of its own: {n}")
-    if any(n.startswith((NET, SHADOW, ORDER, USERS)) for n in loose):
+    if any(n.startswith((NET, SHADOW, ORDER, USERS, SOURCES)) for n in loose):
         return 1
     nodes = sorted(named)
     baseline = [n for n in nodes if pytest(n) != 0]
@@ -1237,7 +1283,7 @@ def main():
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
           f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy, -NP,"
-          " order, ask and IAM user tests, all covered")
+          " order, ask, IAM user and source tests, all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")
         return 1

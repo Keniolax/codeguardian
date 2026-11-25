@@ -55,7 +55,10 @@ def add_subcommands(sub):
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
     p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
 
-    p = common(sub.add_parser("ask", help="ask a question; the model writes a query, code checks and runs it"))
+    p = common(sub.add_parser("ask", help="ask a question; the model writes a query, code checks and runs it",
+                              epilog="exit status: 0 an answer from sources that are current, 2 no answer to act on"
+                                     " (the query was refused, or a note names a source the answer rests on that"
+                                     " is not current)"))
     p.add_argument("--question", required=True)
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
     p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
@@ -157,15 +160,23 @@ def run(a):
         if a.cmd == "explain":
             sys.stdout.write(render.explanation(explain(store, _incident(store, a.incident), provider)))
             return 0
-        from .ask import QueryError, ask
-        from .render import term
+        from .ask import QueryError, ask, sources
+        from .render import not_current, term
 
         try:
-            sys.stdout.write(render.answer(ask(store, a.question, provider)))
+            result = ask(store, a.question, provider)
         except QueryError as exc:
             print(f"query refused: {term(exc)}", file=sys.stderr)
             return 2
-        return 0
+        # An answer from facts that may not hold now is not one to act on: "no rows" from a
+        # collector that never ran would read as "none".
+        held = [line for name in sources(result["query"]) for line in not_current(store, name, clock.now())]
+        for line in held:
+            print(f"note: {term(line)}")
+        if held:
+            print("note: the answer below rests on facts that may not hold now, so it counts as not evaluated")
+        sys.stdout.write(render.answer(result))
+        return 2 if held else 0
     return 1
 
 
@@ -254,8 +265,9 @@ def _port_number(text):
 def _reach(a):
     """Exit REACH_EXIT[answer], or NO_ANSWER with the reason on stderr when there is no
     answer to give. An error escaping here would exit 1, which reads as "denied"."""
+    from .collectors.k8s import SOURCE as K8S
     from .netpol import pod_to_pod
-    from .render import term
+    from .render import not_current, term
     from .schema import entity_id
 
     try:
@@ -271,7 +283,10 @@ def _reach(a):
                 return NO_ANSWER
             ids.append(pid)
         answer, notes = pod_to_pod(store, ids[0], ids[1], a.port, a.protocol)
-        held = _k8s_not_current(store, clock.now())
+        # The model's Kubernetes facts may not hold now: reach still prints the answer the
+        # last good snapshot gives, but exits as not evaluated, so a script never reads an
+        # old "denied" as safe.
+        held = not_current(store, K8S, clock.now())
     except Exception as exc:  # any failure is "no answer", never an answer
         print(f"no answer: {term(type(exc).__name__)}: {term(exc)}", file=sys.stderr)
         return NO_ANSWER
@@ -286,25 +301,6 @@ def _reach(a):
     print("  this assumes the cluster's network plugin enforces NetworkPolicy; the model cannot see that")
     code = REACH_EXIT.get(answer, NO_ANSWER)
     return REACH_EXIT["not evaluated"] if held and code != NO_ANSWER else code
-
-
-def _k8s_not_current(store, now):
-    """Why the model's Kubernetes facts may not hold now, in the words `findings` uses: the
-    source failed, is past its refresh period, or a snapshot taken at the time of the one
-    the model holds was refused as a conflict. reach then still prints the answer the last
-    good snapshot gives, but exits as not evaluated, so a script never reads an old
-    "denied" as safe. A conflict older than the snapshot the model holds is history."""
-    from .collectors.k8s import SOURCE
-    from .render import refused_line, source_status
-
-    s = store.source(SOURCE)
-    line, current = source_status(SOURCE, s, now)
-    held = [] if current else [line]
-    last = (s or {}).get("last_success") or ""
-    for r in store.snapshots(statuses=("conflict",)):
-        if r["source"] == SOURCE and r["at"] >= last:
-            held.append(refused_line(r))
-    return held
 
 
 def _ts(value):
