@@ -362,6 +362,21 @@ shop pod and admits only pods in namespaces labelled `access=shop`. So a connect
 outside the cluster is still denied, and the `-NP` finding stays open. A test checks this
 case.
 
+After the swap, the first layout sent again is refused, because the model holds the
+10:00 snapshot now. `ingest` exits 3 and changes nothing, and `reach` still answers
+allowed for `outsider`. The 10:00 snapshot sent again exits 0:
+
+```
+.venv/bin/python -m codeguardian ingest --db course.db --now 2026-11-14T10:30:00Z --at 2026-11-14T09:55:00Z \
+  --cluster course --k8s $N/shop.json; echo "exit $?"
+.venv/bin/python -m codeguardian ingest --db course.db --now 2026-11-14T10:30:00Z --at 2026-11-14T10:00:00Z \
+  --cluster course --k8s $N/shop-no-policy.json; echo "exit $?"
+```
+
+Before this change, the first of these printed "this snapshot is already in the model"
+and exited 0, while the model held the 10:00 state. A script would read that as "my 09:55
+export is current".
+
 `fixtures/netpol/agents-deny.json` is the chain's Kubernetes state plus one policy: a
 default deny of ingress in namespace `agents`. With it, the chain gives
 `PATH-AI-001-NP` and no open path. The second snapshot, without the policy, swaps them:
@@ -381,12 +396,14 @@ Snapshots and records can arrive in any order. Each one is ordered by the time i
 own data, not by when it arrives.
 
 - A snapshot older than the last one applied from the same collector is refused and
-  changes nothing. `ingest` prints why and exits 3, each time the snapshot is sent. The
-  snapshot the model holds, sent a second time, also changes nothing, and `ingest` exits
-  0. A different snapshot with the same time is refused and listed as not evaluated,
-  because which of the two held is not known. A broken export older than the last good
-  one does not mark its collector failed. A good snapshot older than a broken export, or
-  taken at the same time, does not clear the failure.
+  changes nothing. `ingest` prints why and exits 3, each time the snapshot is sent. This
+  is also true for a snapshot that the model applied before a newer one came, because
+  the model no longer holds it. Only the last snapshot applied, sent again, changes
+  nothing with exit 0. A different snapshot with the same time as one already taken is
+  refused and listed as not evaluated, because which of the two held is not known. A
+  broken export older than the last good one does not mark its collector failed. A good
+  snapshot older than a broken export, or taken at the same time, does not clear the
+  failure.
 - An IAM change record for a role the model does not hold yet waits. When a snapshot
   brings the role, the record applies unless it is older than that snapshot. A record
   with the same time as a snapshot counts after it, whichever of the two arrives first.
@@ -529,6 +546,13 @@ Measured on 2026-11-24 at commit `7088102`, after the review of IAM users: 334 t
 controls one at a time: 349 mutant-test pairs, all fail without their control. The user
 tests read hand-written exports for the documentation account `111122223333`.
 
+Measured on 2026-11-25 at commit `0052d77`, for a snapshot sent again, in a cloud
+container (x86_64 Linux, Python 3.12.3): 379 tests pass (107 for v1, 272 for v2, of which
+24 are for ordering). The mutation run removes 337 controls one at a time: 475
+mutant-test pairs, all fail without their control. On the course layout, the four
+`ingest` calls above (09:55, 10:00, 09:55 again, 10:00 again) exit 0, 0, 3 and 0. After
+the last two, the model, the journal and the history are the same as before them.
+
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
 chain fixture now also lists its 4 namespaces), and the noise
 copies the chain's own record shapes, so these numbers do not predict speed on a real
@@ -609,3 +633,7 @@ What was learned:
   recorded `ask` answer used the right edge. A live model given only edge names chose a
   wrong one every time, and "no rows" read as "none". Telling the model what each edge
   means, and making an empty answer say when the query could not match, fixed both.
+- The journal records what the model was given, not what it holds now. `ingest` called a
+  snapshot a repeat when the journal held its content. So an export that the model had
+  applied and then replaced with a newer one exited 0 as "already in the model". A
+  repeat must now be the last snapshot applied.
