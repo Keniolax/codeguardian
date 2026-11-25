@@ -1321,6 +1321,10 @@ MUTANTS = [
     ("ingest's help does not name exit 1", CLI,
      'in the model, 1 the options were refused"\n                " and the model is unchanged, 2 a',
      'in the model,"\n                " 2 a', [T(INGEST_CODES, SOURCES)]),
+    # Found by the local re-check at the merge of slice 2f on 2026-11-25.
+    ("ingest's help gives 2 only to a failed collector or a noted repeat", CLI,
+     ' (a note says why), or the command line was not understood, 3 a"', ' (a note says why), 3 a"',
+     [T(INGEST_CODES, SOURCES)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 

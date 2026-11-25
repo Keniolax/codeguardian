@@ -483,6 +483,11 @@ def test_ingest_help_names_every_code_ingest_exits_with(tmp_path, capsys):
     text = " ".join(capsys.readouterr().out.split())
     epilog = text[text.index("exit status: "):]
     assert re.findall(r"(?:status:|,) (\d) ", epilog) == ["0", "1", "2", "3"], epilog
+    # Each code's words cover the ways out taken above: 2 is also argparse's code for a
+    # command line it cannot read, as `ingest --k8s` with no value showed.
+    parts = re.split(r"(?:status:|,) (\d) ", epilog)
+    meaning = dict(zip(parts[1::2], parts[2::2]))
+    assert "command line was not understood" in meaning["2"], epilog
 
 
 def test_noted_repeat_is_named_when_another_collector_fails_in_the_same_ingest(tmp_path, capsys):
