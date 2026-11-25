@@ -57,8 +57,8 @@ def add_subcommands(sub):
 
     p = common(sub.add_parser("ask", help="ask a question; the model writes a query, code checks and runs it",
                               epilog="exit status: 0 an answer from sources that are current, 2 no answer to act on"
-                                     " (the query was refused, or a note names a source the answer rests on that"
-                                     " is not current)"))
+                                     " (the query was refused or cannot match anything, or a note names a source"
+                                     " the answer rests on that is not current)"))
     p.add_argument("--question", required=True)
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
     p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
@@ -176,7 +176,8 @@ def run(a):
         if held:
             print("note: the answer below rests on facts that may not hold now, so it counts as not evaluated")
         sys.stdout.write(render.answer(result))
-        return 2 if held else 0
+        # "Not an answer" (a query that cannot match anything) is not one to act on either.
+        return 2 if held or result["cannot_match"] else 0
     return 1
 
 

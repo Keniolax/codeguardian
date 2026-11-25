@@ -200,3 +200,15 @@ def test_ask_refused_query_exits_2_with_nothing_on_stdout_even_from_a_failed_sou
     # Control: the same query with a known type is answered, with the note.
     assert _ask(tmp_path, db, AGENT_PODS) == 2
     assert capsys.readouterr().out.startswith("note: source k8s.state: FAILED at ")
+
+
+def test_ask_query_that_cannot_match_exits_2(tmp_path, capsys):
+    db = _chain_db(tmp_path, capsys)
+    args = ["ask", "--db", db, "--now", NOW, "--question", "Which roles can read sensitive buckets?",
+            "--provider", "recorded", "--answer"]
+    assert cli([*args, str(FX / "ask-answer-wrong-edge.json")]) == 2
+    out = capsys.readouterr().out
+    assert "Not an answer: the model holds no reads edge" in out and "note: " not in out
+    # Control: the same question on the right edge is an answer from current sources.
+    assert cli([*args, str(FX / "ask-answer.json")]) == 0
+    assert "Not an answer" not in capsys.readouterr().out

@@ -48,6 +48,7 @@ ASK_NEVER_RAN = "test_ask_on_a_collector_that_never_ran_notes_it_and_exits_2"
 ASK_NOT_CURRENT = "test_ask_notes_a_failed_stale_or_conflicting_source_it_rests_on_and_exits_2"
 ASK_FORGE = "test_ask_note_and_findings_on_a_failed_source_cannot_forge_a_line"
 ASK_REFUSED = "test_ask_refused_query_exits_2_with_nothing_on_stdout_even_from_a_failed_source"
+ASK_NO_MATCH = "test_ask_query_that_cannot_match_exits_2"
 RESTS_ON = "test_an_answer_rests_on_the_find_type_each_edge_and_each_step_end"
 TYPE_SRC = "test_type_sources_name_the_collector_of_every_entity_and_edge_in_the_models"
 AWS = V2 + "collectors/aws.py"
@@ -1193,13 +1194,19 @@ MUTANTS = [
     ("ask checks every collector, not those the answer rests on", CLI,
      'for name in sources(result["query"]) for line', 'for name in ("aws.state", "k8s.state", "ai.inventory") for line',
      [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES]),
-    ("ask notes a source but exits 0", CLI, "        return 2 if held else 0", "        return 0",
+    ("ask notes a source but exits 0", CLI, '        return 2 if held or result["cannot_match"] else 0',
+     '        return 2 if result["cannot_match"] else 0',
      [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES), T(ASK_REFUSED, SOURCES)]),
     ("ask exits 2 with no note", CLI, '            print(f"note: {term(line)}")', "            pass",
      [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES)]),
     ("ask notes a source without saying the answer is not evaluated", CLI,
      '            print("note: the answer below rests on facts that may not hold now, so it counts as not evaluated")',
      "            pass", [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES)]),
+    ("a query that cannot match exits 0", CLI, '        return 2 if held or result["cannot_match"] else 0',
+     "        return 2 if held else 0", [T(ASK_NO_MATCH, SOURCES)]),
+    ("an answer from current sources exits 2", CLI, '        return 2 if held or result["cannot_match"] else 0',
+     "        return 2", [T(ASK_NO_MATCH, SOURCES), T(ASK_NEVER_RAN, SOURCES)]
+     + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES]),
     ("a refused query exits 0", CLI, '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 2',
      '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 0', [T(ASK_REFUSED, SOURCES)]),
 ]

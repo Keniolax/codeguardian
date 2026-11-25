@@ -201,8 +201,8 @@ is read, and the role reads the bucket, which none of the agent's tools declares
   the query's own type, of each edge it walks, and of the types each step reaches. The
   note uses the words of `findings`, as `reach` does, and `ask` exits 2. So "no rows" from
   an AI inventory that never ran does not read as "no agents". Exit 0 means an answer from
-  current sources. Exit 2 means no answer to act on: the query was refused, or a note was
-  printed.
+  current sources. Exit 2 means no answer to act on: the query was refused, it cannot
+  match anything ("Not an answer"), or a note was printed.
 - The IAM resolver reads Allow statements and wildcards only. Anything else (conditions,
   Deny, NotAction, boundaries, SCPs, bucket policies) is listed as not evaluated.
 - IAM users and groups come from the same export. A user's permissions are its own
