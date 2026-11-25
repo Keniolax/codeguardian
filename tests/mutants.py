@@ -56,6 +56,7 @@ ASK_EVERY_SOURCE = "test_ask_names_every_source_it_rests_on_that_is_not_current"
 ASK_EVERY_REASON = "test_ask_names_every_reason_a_source_is_not_current"
 ASK_FAILED = "test_ask_failed_model_call_is_no_answer_and_exits_2"
 EVERY_STEP = "test_every_step_of_a_walk_adds_the_sources_of_its_far_end"
+EVERY_FILTER = "test_every_filter_of_a_query_adds_the_sources_of_its_attr"
 AWS = V2 + "collectors/aws.py"
 
 
@@ -1279,6 +1280,10 @@ MUTANTS = [
      "                return 2",
      '                print("codeguardian ask: error: --provider recorded needs --answer", file=sys.stderr)\n'
      "                return 1", [T(ASK_FAILED, SOURCES)]),
+    # Found by the local re-check at the merge of slices 2b and 2e on 2026-11-25.
+    ("only the first filter adds the sources of its attr", ASKS,
+     'for c in q["where"]:\n        names.update(ATTR', 'for c in q["where"][:1]:\n        names.update(ATTR',
+     [T(EVERY_FILTER, SOURCES)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 

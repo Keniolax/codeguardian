@@ -320,3 +320,21 @@ def test_ask_failed_model_call_is_no_answer_and_exits_2(tmp_path, capsys, monkey
     # Control: a saved answer that reads is an answer from current sources.
     assert _ask(tmp_path, db, AGENTS) == 0
     assert capsys.readouterr().out.splitlines()[-1] == AGENT_ROW
+
+
+def test_every_filter_of_a_query_adds_the_sources_of_its_attr(tmp_path, capsys):
+    # irsa_status as the second filter: the answer still rests on the AWS roles.
+    named_and_verified = {**IRSA_VERIFIED, "where": SA_BY_NAME["where"] + IRSA_VERIFIED["where"]}
+    db = str(tmp_path / "no-aws.db")
+    assert _ingest(db, *K8S, *AI) == 0
+    capsys.readouterr()
+    assert _ask(tmp_path, db, named_and_verified) == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "note: source aws.state: NEVER RUN. Nothing from it is in the model; findings do not cover it."
+    assert out[1] == NOT_EVALUATED and out[-1] == "- no rows"
+    # Control: once the AWS export ran, the same query is an answer from current sources.
+    assert _ingest(db, *AWS, at=LATER) == 0
+    capsys.readouterr()
+    assert _ask(tmp_path, db, named_and_verified) == 0
+    out = capsys.readouterr().out
+    assert "note: " not in out and out.splitlines()[-1] == f"- {safe(SA)}"
