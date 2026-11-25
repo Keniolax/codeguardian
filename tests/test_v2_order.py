@@ -5,9 +5,11 @@ control. Every test here must have a mutant in tests/mutants.py."""
 import json
 from itertools import permutations
 
+import pytest
+
 from codeguardian.cli import main as cli
 from codeguardian.v2 import render
-from codeguardian.v2.collectors import CollectorError
+from codeguardian.v2.collectors import CollectorError, manifest
 from codeguardian.v2.history import history
 from codeguardian.v2.pipeline import Pipeline
 from codeguardian.v2.rules import load_rules
@@ -431,6 +433,118 @@ def test_other_content_at_an_older_snapshots_time_is_still_a_conflict(tmp_path):
     assert _tables(store) == before
     assert [v[1][0][:2] for v in hist.values()] == [("2026-11-14T09:55:00.000000Z", "opened")]
     assert [v[1][0][:2] for v in changes_of(store).values()] == [("2026-11-14T09:50:00.000000Z", "opened")]
+
+
+# --- review of slice snapshot-repeat: inputs the build's tests did not hold -------------------------
+
+def test_snapshot_applied_before_is_refused_as_older_even_after_a_conflict_at_its_time():
+    store, pipe = fresh()
+    assert pipe.snapshot(k8s=COURSE, at=SNAPSHOT_AT)["refused"] == []
+    assert [x[:2] for x in pipe.snapshot(k8s=COURSE_NO_POLICY, at=SNAPSHOT_AT)["refused"]] == [("k8s.state", "conflict")]
+    assert pipe.snapshot(k8s=COURSE_NO_POLICY, at=NO_POLICY_AT)["refused"] == []
+    before, journal, conflicts = _tables(store), store.snapshots(), store.counters()["snapshot_conflict"]
+    # The 09:55 layout again. The model applied it, then 10:00 came, so it is older now.
+    # "Which one holds is not known" would hide that the model holds 10:00.
+    r = pipe.snapshot(k8s=COURSE, at=SNAPSHOT_AT)
+    assert r["unchanged"] == [] and r["refused"] == [
+        ("k8s.state", "older", "is older than the last applied snapshot of k8s.state, taken at 2026-11-14T10:00:00.000000Z")]
+    assert _tables(store) == before and store.snapshots() == journal
+    assert (store.counters()["snapshot_older"], store.counters()["snapshot_conflict"]) == (1, conflicts)
+    # Control: the snapshot refused at 09:55, sent again, is still a conflict.
+    r = pipe.snapshot(k8s=COURSE_NO_POLICY, at=SNAPSHOT_AT)
+    assert [x[:2] for x in r["refused"]] == [("k8s.state", "conflict")]
+    assert _tables(store) == before and store.snapshots() == journal
+
+
+def test_last_good_snapshot_sent_again_after_a_newer_failure_is_still_a_repeat(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+    store, pipe = fresh()
+    pipe.snapshot(k8s=COURSE, at="2026-11-14T09:50:00Z")
+    pipe.snapshot(k8s=COURSE_NO_POLICY, at=SNAPSHOT_AT)
+    with pytest.raises(CollectorError):
+        pipe.snapshot(k8s=bad, at=LATER_AT)
+    before, sources, journal = _tables(store), store.sources(), store.snapshots()
+    k8s = store.source("k8s.state")
+    assert (k8s["status"], k8s["last_success"], k8s["last_attempt"]) == (
+        "failed", "2026-11-14T09:55:00.000000Z", "2026-11-14T10:15:00.000000Z")
+    # A repeat is the last snapshot applied, its last good run, not its last attempt.
+    r = pipe.snapshot(k8s=COURSE_NO_POLICY, at=SNAPSHOT_AT)
+    assert r["unchanged"] == ["k8s.state"] and r["refused"] == []
+    assert _tables(store) == before and store.sources() == sources and store.snapshots() == journal
+    # Control: the snapshot applied before it is older, and the failure still stands.
+    r = pipe.snapshot(k8s=COURSE, at="2026-11-14T09:50:00Z")
+    assert r["unchanged"] == [] and [x[:2] for x in r["refused"]] == [("k8s.state", "older")]
+    assert store.sources() == sources
+
+
+def _k8s_export(directory, layout, at, cluster):
+    """A k8s export directory written by hand: the layout and a manifest with its hash."""
+    directory.mkdir()
+    data = layout.read_bytes()
+    (directory / "k8s.json").write_bytes(data)
+    (directory / "k8s-manifest.json").write_text(json.dumps({
+        "format": manifest.FORMAT, "kind": "k8s", "exported_at": at, "cluster": cluster,
+        "files": {"k8s.json": manifest.sha256(data)}}))
+    return directory
+
+
+def test_refused_or_failed_k8s_snapshot_leaves_the_cluster_name_the_model_uses(tmp_path, capsys):
+    db = str(tmp_path / "course.db")
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+
+    def run(cmd, *args):
+        code = cli([cmd, "--db", db, "--now", NOW, *args])
+        return code, capsys.readouterr()
+
+    def reach():
+        return run("reach", "--from", "outsider/outsider-2f9a", "--to", "shop/shop-web-5d8f", "--port", "3000")[0]
+
+    assert run("ingest", "--at", SNAPSHOT_AT, "--cluster", "course", "--k8s", str(COURSE))[0] == 0
+    assert run("ingest", "--at", NO_POLICY_AT, "--cluster", "course", "--k8s", str(COURSE_NO_POLICY))[0] == 0
+    store = Store(db)
+    before, sources = _tables(store), store.sources()
+    # Each refused with exit 3: the 09:55 layout under another name, and an older export of
+    # another cluster. The name is the default of reach and of a later ingest. Set by a
+    # refused snapshot, reach found no pod, and the 10:00 snapshot sent again was refused.
+    assert run("ingest", "--at", SNAPSHOT_AT, "--cluster", "other", "--k8s", str(COURSE))[0] == 3
+    assert run("ingest", "--k8s-export", str(_k8s_export(tmp_path / "old", COURSE, "2026-11-14T09:50:00Z",
+                                                          "staging")))[0] == 3
+    store = Store(db)
+    assert store.setting("cluster") == "course" and _tables(store) == before and store.sources() == sources
+    assert reach() == 0  # allowed, as the 10:00 snapshot says
+    code, out = run("ingest", "--at", NO_POLICY_AT, "--k8s", str(COURSE_NO_POLICY))
+    assert code == 0 and "k8s.state: this snapshot is already in the model; nothing changed" in out.out
+    # A broken snapshot under another name fails the source and leaves the name too, so
+    # reach still finds the pods and answers "not evaluated", not "no answer".
+    assert run("ingest", "--at", LATER_AT, "--cluster", "other", "--k8s", str(bad))[0] == 2
+    assert Store(db).setting("cluster") == "course"
+    assert reach() == 2
+    # Control: a newer export of another cluster applies, and its name becomes the default.
+    assert run("ingest", "--k8s-export", str(_k8s_export(tmp_path / "new", COURSE, "2026-11-14T10:20:00Z",
+                                                          "staging")))[0] == 0
+    assert Store(db).setting("cluster") == "staging"
+    assert reach() == 1  # denied: the layout with its two policies, in cluster staging
+
+
+def test_cluster_name_in_an_export_manifest_is_escaped_in_the_mismatch_error(tmp_path):
+    def mismatch(name, cluster, given="course"):
+        export = _k8s_export(tmp_path / name, COURSE, SNAPSHOT_AT, cluster)
+        with pytest.raises(SystemExit) as stop:
+            cli(["ingest", "--db", str(tmp_path / "m.db"), "--now", NOW, "--cluster", given,
+                 "--k8s-export", str(export)])
+        return str(stop.value)
+
+    # The name comes from the environment: a newline would forge a line, and ESC or the C1
+    # CSI (U+009B) would reach the terminal.
+    hostile = "lab\nsnapshot refused: forged\x1b[31m\x9b31m‏"
+    assert mismatch("hostile", hostile) == ("--cluster course does not match the export's cluster"
+                                            " lab\\x0asnapshot refused: forged\\x1b[31m\\x9b31m\\u200f")
+    assert mismatch("given", "lab", given=hostile) == (
+        "--cluster lab\\x0asnapshot refused: forged\\x1b[31m\\x9b31m\\u200f does not match the export's cluster lab")
+    # Control: a plain name reads as it is.
+    assert mismatch("plain", "staging") == "--cluster course does not match the export's cluster staging"
 
 
 # --- records that arrive before what they need ----------------------------------------------------

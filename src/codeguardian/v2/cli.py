@@ -19,8 +19,8 @@ def add_subcommands(sub):
     def common(p):
         p.add_argument("--db", required=True, help="SQLite file holding the model")
         p.add_argument("--now", help="RFC 3339 time to treat as now (for recorded data); default: the system clock")
-        p.add_argument("--cluster", help="Kubernetes cluster name used in entity IDs; default: the name the"
-                                         " last k8s export recorded, else lab")
+        p.add_argument("--cluster", help="Kubernetes cluster name used in entity IDs; default: the name of"
+                                         " the last k8s snapshot applied, else lab")
         return p
 
     p = common(sub.add_parser("ingest", help="read exported snapshots into the model"))
@@ -202,9 +202,10 @@ def _ingest(a, store, pipe, clock):
             continue
         if kind == "k8s":
             if a.cluster and a.cluster != m["cluster"]:
-                raise SystemExit(f"--cluster {a.cluster} does not match the export's cluster {m['cluster']}")
+                raise SystemExit(f"--cluster {term(a.cluster)} does not match the export's cluster"
+                                 f" {term(m['cluster'])}")
+            # The pipeline keeps the name as the default only if it applies the snapshot.
             pipe.cluster = m["cluster"]
-            store.set_setting("cluster", m["cluster"])
             jobs.append({"k8s": paths["k8s"], "at": m["exported_at"]})
         else:
             jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": m["exported_at"]})
@@ -214,8 +215,6 @@ def _ingest(a, store, pipe, clock):
     typed = {"aws": aws if all(aws) else None, "k8s": a.k8s, "ai": a.ai}
     if any(typed.values()):
         jobs.append({**typed, "at": a.at and _ts(a.at)})
-        if a.k8s:
-            store.set_setting("cluster", pipe.cluster)
     opened = resolved = 0
     refused, stale = [], bool(errors)
     for job in jobs:

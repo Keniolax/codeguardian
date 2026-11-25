@@ -129,6 +129,10 @@ class Pipeline:
         # A snapshot refused before is refused again for the same reason: it is not in the
         # model, so it must not read as a repeat of one that is.
         others = [e for e in same_time if e["digest"] != d]
+        if any(e["digest"] == d and e["status"] == "applied" for e in same_time):
+            # Applied before a newer one came, so older now, even when another snapshot
+            # was refused at its time: the journal already holds it, and the model a newer one.
+            others = []
         if others or (last is not None and at == last):
             # Two different snapshots of one collector at one time: which one holds is unknown.
             verdict, reason = "conflict", (f"differs from the snapshot of {source} already taken at {at};"
@@ -164,6 +168,9 @@ class Pipeline:
                 aws_collector.apply(self.store, content["data"], at)
             elif name == k8s_collector.SOURCE:
                 k8s_collector.apply(self.store, content["data"], content["cluster"], at, tuple(content["outside"]))
+                # The cluster name in the model's pod IDs, the default of the commands that name
+                # a pod. Only an applied snapshot sets it: a refused one changes nothing.
+                self.store.set_setting("cluster", content["cluster"])
             else:
                 ai_collector.apply(self.store, content["data"], at)
             self.store.record_source(name, True, at)

@@ -108,6 +108,10 @@ NEWER_FAILURE = "test_newer_failed_export_still_stands_when_an_older_snapshot_ar
 REFUSED_AGAIN = "test_a_refused_snapshot_sent_again_is_refused_again"
 REPEAT = "test_snapshot_applied_before_a_newer_one_is_refused_as_older_when_sent_again"
 OLDER_CONFLICT = "test_other_content_at_an_older_snapshots_time_is_still_a_conflict"
+OLDER_AFTER_CONFLICT = "test_snapshot_applied_before_is_refused_as_older_even_after_a_conflict_at_its_time"
+REPEAT_AFTER_FAILURE = "test_last_good_snapshot_sent_again_after_a_newer_failure_is_still_a_repeat"
+CLUSTER_KEPT = "test_refused_or_failed_k8s_snapshot_leaves_the_cluster_name_the_model_uses"
+CLUSTER_ESCAPED = "test_cluster_name_in_an_export_manifest_is_escaped_in_the_mismatch_error"
 
 
 MUTANTS = [
@@ -642,9 +646,9 @@ MUTANTS = [
      '            jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": m["exported_at"]})',
      '            jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": None})',
      [T("test_export_then_ingest_gives_the_same_findings_and_incident_as_the_fixtures", EXP)]),
-    ("ingest ignores the manifest's cluster name", V2 + "cli.py",
-     '            store.set_setting("cluster", m["cluster"])\n', "",
-     [T("test_export_then_ingest_gives_the_same_findings_and_incident_as_the_fixtures", EXP)]),
+    ("the cluster name of an applied k8s snapshot not kept", PL,
+     '                self.store.set_setting("cluster", content["cluster"])\n', "",
+     [T("test_export_then_ingest_gives_the_same_findings_and_incident_as_the_fixtures", EXP), T(CLUSTER_KEPT, ORDER)]),
     ("records for a role not in the model not shown", V2 + "render.py",
      '    "model_change_role_not_in_model": "IAM change records for a role the model does not hold (not applied)",\n', "",
      [T("test_change_record_for_an_unknown_role_shows_in_findings", EXP)]),
@@ -1164,6 +1168,21 @@ MUTANTS = [
     ("other content at an older snapshot's time refused as older, not as a conflict", PL,
      "        if others or (last is not None and at == last):",
      "        if (others and at >= (last or at)) or (last is not None and at == last):", [T(OLDER_CONFLICT, ORDER)]),
+    # Review of slice snapshot-repeat: the faults it fixed, and a control that had no test.
+    ("a snapshot applied before a newer one refused as a conflict when another was refused at its time", PL,
+     "            others = []\n", "            pass\n", [T(OLDER_AFTER_CONFLICT, ORDER)]),
+    ("a repeat measured against the last attempt, not the last good run", PL,
+     "        if at == last and any(", '        if at == (health or {}).get("last_attempt") and any(',
+     [T(REPEAT_AFTER_FAILURE, ORDER)]),
+    ("a refused or failed k8s snapshot sets the cluster name", V2 + "cli.py",
+     "    opened = resolved = 0\n", '    store.set_setting("cluster", pipe.cluster)\n    opened = resolved = 0\n',
+     [T(CLUSTER_KEPT, ORDER)]),
+    ("an export's cluster name not used for its pods", V2 + "cli.py",
+     '            pipe.cluster = m["cluster"]\n', "            pass\n", [T(CLUSTER_KEPT, ORDER)]),
+    ("cluster name in an export manifest printed raw in the mismatch error", V2 + "cli.py",
+     "f\" {term(m['cluster'])}\")", "f\" {m['cluster']}\")", [T(CLUSTER_ESCAPED, ORDER)]),
+    ("--cluster value printed raw in the mismatch error", V2 + "cli.py",
+     'f"--cluster {term(a.cluster)} does not', 'f"--cluster {a.cluster} does not', [T(CLUSTER_ESCAPED, ORDER)]),
     ("unknown option of a command ignored", "src/codeguardian/cli.py",
      '        ap.error(f"unrecognized arguments: {\' \'.join(extra)}")', "        pass",
      [T("test_unknown_option_of_a_command_is_refused_with_exit_2", CORE)]),
