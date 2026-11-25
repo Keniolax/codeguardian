@@ -377,6 +377,17 @@ Before this change, the first of these printed "this snapshot is already in the 
 and exited 0, while the model held the 10:00 state. A script would read that as "my 09:55
 export is current".
 
+A review on 2026-11-25 gave `ingest` inputs that the tests did not hold, and found three
+faults. All three are fixed. `ingest` stored the cluster name before the model refused or
+applied the snapshot. So the 09:55 layout sent again with `--cluster other`, or an older
+export of another cluster, was refused with exit 3, but `reach` then looked for the pods
+in that cluster and gave no answer. The 10:00 snapshot sent again was then refused as a
+conflict. Now only an applied snapshot sets the name. The 09:55 layout sent again after
+another snapshot was refused at 09:55 read as a conflict, so the message did not say that
+the model holds 10:00; it is now refused as older. A newline or an escape code in the
+cluster name of an export manifest reached the terminal in the error for a `--cluster`
+that does not match.
+
 `fixtures/netpol/agents-deny.json` is the chain's Kubernetes state plus one policy: a
 default deny of ingress in namespace `agents`. With it, the chain gives
 `PATH-AI-001-NP` and no open path. The second snapshot, without the policy, swaps them:
@@ -437,7 +448,8 @@ To take a snapshot of your own account or cluster, use the export scripts. They 
 `aws` and `kubectl` CLIs you already have, with read calls only, and write the files the
 collectors read, with mode 0600, plus a manifest. They refuse to write inside a git work
 tree unless git ignores the path (`exports/` is ignored here). Then ingest takes the time
-and the cluster name from the manifests. Keep the database under `exports/` too, since it
+and the cluster name from the manifests. Later commands use the cluster name of the last
+k8s snapshot the model applied, unless you give `--cluster`. Keep the database under `exports/` too, since it
 holds the same real data; `ingest` gives it mode 0600 as well:
 
 ```
@@ -553,6 +565,12 @@ mutant-test pairs, all fail without their control. On the course layout, the fou
 `ingest` calls above (09:55, 10:00, 09:55 again, 10:00 again) exit 0, 0, 3 and 0. After
 the last two, the model, the journal and the history are the same as before them.
 
+Measured on 2026-11-25 at commit `a7a5b7f`, after the review of this slice, in a cloud
+container (x86_64 Linux, Python 3.12.3): 383 tests pass (107 for v1, 276 for v2, of which
+28 are for ordering). The mutation run removes 343 controls one at a time: 482
+mutant-test pairs, all fail without their control. The review's inputs are the course
+layout and export directories written by hand for it.
+
 The data is recorded, not live. At `dd2dff1` the model held 24 entities and 20 edges (the
 chain fixture now also lists its 4 namespaces), and the noise
 copies the chain's own record shapes, so these numbers do not predict speed on a real
@@ -637,3 +655,6 @@ What was learned:
   snapshot a repeat when the journal held its content. So an export that the model had
   applied and then replaced with a newer one exited 0 as "already in the model". A
   repeat must now be the last snapshot applied.
+- A refusal must leave the settings as well as the model. `ingest` stored a snapshot's
+  cluster name before the model refused it, so a refused export of another cluster
+  changed the pods that `reach` looked for.
