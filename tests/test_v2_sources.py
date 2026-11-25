@@ -21,7 +21,7 @@ from codeguardian.v2.schema import EDGE_SOURCES, ENTITY_TYPES, TYPE_SOURCES, Fix
 from codeguardian.v2.store import Store
 from test_v2_netpol import LAYOUT
 from test_v2_users import group, user, with_iam
-from v2_helpers import AGENT, FX, NOW, POD, SNAPSHOT_AT, build, chain
+from v2_helpers import AGENT, FX, NOW, POD, SNAPSHOT_AT, build, chain, dump
 
 FAILED_AT = "2026-11-14T10:10:00Z"
 LATER = "2026-11-14T10:15:00Z"
@@ -44,8 +44,8 @@ NOT_CURRENT = {
 }
 
 
-def _ingest(db, *args, at=SNAPSHOT_AT):
-    return cli(["ingest", "--db", db, "--now", NOW, "--at", at, *args])
+def _ingest(db, *args, at=SNAPSHOT_AT, now=NOW):
+    return cli(["ingest", "--db", db, "--now", now, "--at", at, *args])
 
 
 def _ask(tmp_path, db, query, now=NOW):
@@ -212,3 +212,69 @@ def test_ask_query_that_cannot_match_exits_2(tmp_path, capsys):
     # Control: the same question on the right edge is an answer from current sources.
     assert cli([*args, str(FX / "ask-answer.json")]) == 0
     assert "Not an answer" not in capsys.readouterr().out
+
+
+# --- a snapshot sent again -----------------------------------------------------------------------
+
+REPEAT = "k8s.state: this snapshot is already in the model; nothing changed"
+AGAIN = "note: sending this snapshot again does not show that the facts of k8s.state still hold"
+NONE_OPENED = "opened 0, resolved 0 findings"
+
+
+def _model(db):
+    store = Store(db)
+    return {k: v for k, v in dump(store).items() if k != "counters"}, [tuple(r.values()) for r in store.snapshots()]
+
+
+@pytest.mark.parametrize("case", sorted(NOT_CURRENT))
+def test_repeat_of_a_source_that_is_not_current_notes_it_and_exits_2(tmp_path, capsys, case):
+    now, words = NOT_CURRENT[case]
+    db = _chain_db(tmp_path, capsys)
+    if case == "failed":
+        assert _ingest(db, *_truncated(tmp_path), at=FAILED_AT) == 2
+    elif case == "conflict":
+        assert _ingest(db, *_other_k8s(tmp_path)) == 3
+    capsys.readouterr()
+    before = _model(db)
+    # The snapshot the model holds, sent again.
+    assert _ingest(db, *K8S, now=now) == 2
+    out = capsys.readouterr()
+    lines = out.out.splitlines()
+    assert lines[0] == REPEAT
+    assert lines[1].startswith(f"note: {words}"), lines
+    assert lines[2:] == [AGAIN, NONE_OPENED]
+    assert out.err == ""
+    assert _model(db) == before
+    # findings still names the same reason.
+    assert words.rstrip(": ") in render.findings(Store(db), now)
+    # Control: a good snapshot taken later, then sent again, is a repeat with no note.
+    assert _ingest(db, *K8S, at=LATER, now=now) == 0
+    capsys.readouterr()
+    assert _ingest(db, *K8S, at=LATER, now=now) == 0
+    assert capsys.readouterr().out.splitlines() == [REPEAT, NONE_OPENED]
+
+
+def test_noted_repeat_exits_2_before_a_refusal_in_the_same_ingest(tmp_path, capsys):
+    def setup(name, fail):
+        db = str(tmp_path / f"{name}.db")
+        assert _ingest(db, *AWS, *K8S) == 0
+        assert _ingest(db, *AI, at=LATER) == 0
+        if fail:
+            assert _ingest(db, *_truncated(tmp_path), at=FAILED_AT) == 2
+        capsys.readouterr()
+        return db
+
+    # One ingest: the k8s snapshot the model holds, sent again after a failed export, and an
+    # AI inventory older than the one applied.
+    db = setup("failed", True)
+    assert _ingest(db, *K8S, *AI) == 2
+    out = capsys.readouterr()
+    lines = out.out.splitlines()
+    assert lines[0] == REPEAT and lines[1].startswith("note: source k8s.state: FAILED at ")
+    assert lines[2:] == [AGAIN, NONE_OPENED]
+    assert out.err.startswith("snapshot refused: ai.inventory: ")
+    # Control: with no failure the repeat has no note and the refusal's exit 3 stands.
+    db = setup("ok", False)
+    assert _ingest(db, *K8S, *AI) == 3
+    out = capsys.readouterr()
+    assert out.out.splitlines() == [REPEAT, NONE_OPENED] and out.err.startswith("snapshot refused: ai.inventory: ")

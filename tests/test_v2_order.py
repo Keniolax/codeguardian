@@ -352,10 +352,14 @@ def test_a_refused_snapshot_sent_again_is_refused_again(tmp_path, capsys):
     assert (store.counters()["snapshot_older"], store.counters()["snapshot_conflict"]) == (2, 2)
     assert [s["status"] for s in store.snapshots()] == ["older", "applied", "conflict"]  # one entry each
     assert "reports-read" not in store.entity(ROLE)["attrs"]["inline_policies"]
-    # Control: the applied snapshot sent again is a repeat: nothing changes, exit 0.
+    # Control: the applied snapshot sent again is a repeat: nothing changes. A snapshot with its
+    # time was refused as a conflict, so which one holds is not known; the repeat says so and
+    # exits 2 (slice 2f).
     capsys.readouterr()
-    assert cli(["ingest", "--db", db, "--now", NOW, "--at", LATER_AT, *aws]) == 0
-    assert "aws.state: this snapshot is already in the model; nothing changed" in capsys.readouterr().out
+    assert cli(["ingest", "--db", db, "--now", NOW, "--at", LATER_AT, *aws]) == 2
+    out = capsys.readouterr().out
+    assert "aws.state: this snapshot is already in the model; nothing changed" in out
+    assert f"note: aws.state taken at {ts(LATER_AT)}: refused, another snapshot of aws.state" in out
 
 
 # --- records that arrive before what they need ----------------------------------------------------

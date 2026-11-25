@@ -391,7 +391,11 @@ own data, not by when it arrives.
 - A snapshot older than the last one applied from the same collector is refused and
   changes nothing. `ingest` prints why and exits 3, each time the snapshot is sent. The
   snapshot the model holds, sent a second time, also changes nothing, and `ingest` exits
-  0. A different snapshot with the same time is refused and listed as not evaluated,
+  0. But if that collector is not current (its last export failed, its last good snapshot
+  is past the refresh period, or a snapshot of it was refused as a conflict), `ingest`
+  adds a note in the words of `findings` and exits 2: a snapshot sent again does not show
+  that the facts still hold. In one `ingest`, that exit 2 comes before a refusal's 3. A
+  different snapshot with the same time is refused and listed as not evaluated,
   because which of the two held is not known. A broken export older than the last good
   one does not mark its collector failed. A good snapshot older than a broken export, or
   taken at the same time, does not clear the failure.

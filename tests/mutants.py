@@ -49,6 +49,8 @@ ASK_NOT_CURRENT = "test_ask_notes_a_failed_stale_or_conflicting_source_it_rests_
 ASK_FORGE = "test_ask_note_and_findings_on_a_failed_source_cannot_forge_a_line"
 ASK_REFUSED = "test_ask_refused_query_exits_2_with_nothing_on_stdout_even_from_a_failed_source"
 ASK_NO_MATCH = "test_ask_query_that_cannot_match_exits_2"
+REPEAT_NOTED = "test_repeat_of_a_source_that_is_not_current_notes_it_and_exits_2"
+REPEAT_FIRST = "test_noted_repeat_exits_2_before_a_refusal_in_the_same_ingest"
 RESTS_ON = "test_an_answer_rests_on_the_find_type_each_edge_and_each_step_end"
 TYPE_SRC = "test_type_sources_name_the_collector_of_every_entity_and_edge_in_the_models"
 AWS = V2 + "collectors/aws.py"
@@ -573,7 +575,8 @@ MUTANTS = [
      '    elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:',
      '    elif False:',
      [T("test_source_past_its_refresh_period_is_shown_stale", CORE), T(f"{NOT_CURRENT}[stale]", SHADOW),
-      T(f"{ASK_NOT_CURRENT}[stale]", SOURCES)]),
+      T(f"{ASK_NOT_CURRENT}[stale]", SOURCES),
+      T(f"{REPEAT_NOTED}[stale]", SOURCES)]),
     # Export: read-only, and missing knowledge is not safe.
     ("export runs commands that are not on the read-only list", EXPORT,
      "    if not allowed(argv):", "    if False:",
@@ -983,10 +986,12 @@ MUTANTS = [
      '    return REACH_EXIT["not evaluated"] if held and code != NO_ANSWER else code', "    return code",
      [T(f"{NOT_CURRENT}[{c}]", SHADOW) for c in NOT_CURRENT_CASES] + [T(FORGE, SHADOW), T(OTHER_CONFLICT, SHADOW)]),
     ("a failed source reads as current", V2 + "render.py", '    elif s["status"] != "ok":', "    elif False:",
-     [T(f"{NOT_CURRENT}[failed]", SHADOW), T(FORGE, SHADOW), T(f"{ASK_NOT_CURRENT}[failed]", SOURCES)]),
+     [T(f"{NOT_CURRENT}[failed]", SHADOW), T(FORGE, SHADOW), T(f"{ASK_NOT_CURRENT}[failed]", SOURCES),
+      T(f"{REPEAT_NOTED}[failed]", SOURCES), T(REPEAT_FIRST, SOURCES)]),
     ("a conflict at the time of the model's snapshot not noted", V2 + "render.py",
      '        if r["source"] == source and r["at"] >= last:', "        if False:",
-     [T(f"{NOT_CURRENT}[conflict]", SHADOW), T(OTHER_CONFLICT, SHADOW), T(f"{ASK_NOT_CURRENT}[conflict]", SOURCES)]),
+     [T(f"{NOT_CURRENT}[conflict]", SHADOW), T(OTHER_CONFLICT, SHADOW), T(f"{ASK_NOT_CURRENT}[conflict]", SOURCES),
+      T(f"{REPEAT_NOTED}[conflict]", SOURCES)]),
     ("a conflict older than the model's snapshot still noted", V2 + "render.py",
      '        if r["source"] == source and r["at"] >= last:', '        if r["source"] == source:',
      [T(f"{NOT_CURRENT}[conflict]", SHADOW)]),
@@ -1162,8 +1167,8 @@ MUTANTS = [
      "            out.append(f\"  path: {' -> '.join(safe(p, 300) for p in f['path'])}\")",
      "            out.append(f\"  path: {' -> '.join(p for p in f['path'])}\")", [T(HIST_OUT, ORDER)]),
     ("findings --history ignored", V2 + "cli.py", "        if a.history:", "        if False:", [T(HIST_OUT, ORDER)]),
-    ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 3 if refused else 0", "    return 0",
-     [T(INGEST, ORDER)]),
+    ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 2 if noted else 3 if refused else 0",
+     "    return 2 if noted else 0", [T(INGEST, ORDER), T(REPEAT_FIRST, SOURCES)]),
     ("unknown option of a command ignored", "src/codeguardian/cli.py",
      '        ap.error(f"unrecognized arguments: {\' \'.join(extra)}")', "        pass",
      [T("test_unknown_option_of_a_command_is_refused_with_exit_2", CORE)]),
@@ -1197,7 +1202,8 @@ MUTANTS = [
     ("ask notes a source but exits 0", CLI, '        return 2 if held or result["cannot_match"] else 0',
      '        return 2 if result["cannot_match"] else 0',
      [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES), T(ASK_REFUSED, SOURCES)]),
-    ("ask exits 2 with no note", CLI, '            print(f"note: {term(line)}")', "            pass",
+    ("ask exits 2 with no note", CLI, '        for line in held:\n            print(f"note: {term(line)}")\n        if held:',
+     "        for line in held:\n            pass\n        if held:",
      [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES)]),
     ("ask notes a source without saying the answer is not evaluated", CLI,
      '            print("note: the answer below rests on facts that may not hold now, so it counts as not evaluated")',
@@ -1209,6 +1215,18 @@ MUTANTS = [
      + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES]),
     ("a refused query exits 0", CLI, '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 2',
      '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 0', [T(ASK_REFUSED, SOURCES)]),
+    # A snapshot sent again names a source that is not current (slice 2f).
+    ("a repeat ignores a source that is not current", CLI, "            held = not_current(store, name, clock.now())",
+     "            held = []", [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a repeat's note not printed", CLI, '                print(f"note: {term(line)}")', "                pass",
+     [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a repeat's note does not say the snapshot sent again shows nothing", CLI,
+     '                print(f"note: sending this snapshot again', '                pass  # print(f"note: sending this snapshot again',
+     [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a noted repeat exits 0", CLI, "    return 2 if noted else 3 if refused else 0", "    return 3 if refused else 0",
+     [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a refusal's exit 3 comes before a noted repeat's 2", CLI, "    return 2 if noted else 3 if refused else 0",
+     "    return 3 if refused else 2 if noted else 0", [T(REPEAT_FIRST, SOURCES)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 
