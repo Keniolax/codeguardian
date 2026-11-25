@@ -7,6 +7,7 @@ a script cannot read "no rows" or "already in the model" as "nothing has changed
 """
 
 import json
+import re
 
 import pytest
 
@@ -278,3 +279,104 @@ def test_noted_repeat_exits_2_before_a_refusal_in_the_same_ingest(tmp_path, caps
     assert _ingest(db, *K8S, *AI) == 3
     out = capsys.readouterr()
     assert out.out.splitlines() == [REPEAT, NONE_OPENED] and out.err.startswith("snapshot refused: ai.inventory: ")
+
+
+def _other_ai(tmp_path):
+    data = json.loads((FX / "ai/inventory.json").read_text())
+    data["agents"] = []
+    path = tmp_path / "other-ai.json"
+    path.write_text(json.dumps(data))
+    return ["--ai", str(path)]
+
+
+def _truncated_aws(tmp_path):
+    path = tmp_path / "truncated-iam.json"
+    path.write_text('{"Users": [')
+    return ["--aws-iam", str(path), *AWS[2:]]
+
+
+def test_repeat_names_every_source_and_every_reason_that_is_not_current(tmp_path, capsys):
+    db = _chain_db(tmp_path, capsys)
+    # A conflict for k8s.state and for ai.inventory at 09:55, then a failed export of
+    # aws.state and k8s.state at 10:10: k8s.state is not current for two reasons.
+    assert _ingest(db, *_other_k8s(tmp_path)) == 3
+    assert _ingest(db, *_other_ai(tmp_path)) == 3
+    assert _ingest(db, *_truncated_aws(tmp_path), *_truncated(tmp_path), at=FAILED_AT) == 2
+    capsys.readouterr()
+    before = _model(db)
+    # One ingest sends again the three snapshots the model holds.
+    assert _ingest(db, *AWS, *K8S, *AI) == 2
+    out = capsys.readouterr()
+    lines = out.out.splitlines()
+    conflict = "taken at 2026-11-14T09:55:00.000000Z: refused, another snapshot of"
+    expected = [
+        ("aws.state", ["note: source aws.state: FAILED at 2026-11-14T10:10:00.000000Z: aws iam: "]),
+        ("k8s.state", ["note: source k8s.state: FAILED at 2026-11-14T10:10:00.000000Z: k8s: ",
+                       f"note: k8s.state {conflict} k8s.state "]),
+        ("ai.inventory", [f"note: ai.inventory {conflict} ai.inventory "]),
+    ]
+    at = 0
+    for name, notes in expected:
+        assert lines[at] == f"{name}: this snapshot is already in the model; nothing changed", lines
+        for i, words in enumerate(notes, at + 1):
+            assert lines[i].startswith(words), lines
+        at += len(notes) + 1
+        assert lines[at] == f"note: sending this snapshot again does not show that the facts of {name} still hold"
+        at += 1
+    assert lines[at:] == [NONE_OPENED]
+    assert out.err == ""
+    assert _model(db) == before
+    # Control: good snapshots taken later, then sent again, are repeats with no note.
+    assert _ingest(db, *AWS, *K8S, *AI, at=LATER) == 0
+    capsys.readouterr()
+    assert _ingest(db, *AWS, *K8S, *AI, at=LATER) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        f"{name}: this snapshot is already in the model; nothing changed" for name, _ in expected] + [NONE_OPENED]
+
+
+def test_ingest_help_names_every_code_ingest_exits_with(tmp_path, capsys):
+    codes = set()
+    db = _chain_db(tmp_path, capsys)
+    codes.add(0)
+    codes.add(_ingest(db, *K8S, at="2026-11-14T09:50:00Z"))  # older: refused
+    codes.add(_ingest(db, *_truncated(tmp_path), at=FAILED_AT))  # failed
+    before = _model(db)
+    for refused in (["--aws-iam", AWS[1]], ["--outside-source", "198.51.100.0/40"]):
+        with pytest.raises(SystemExit) as stop:
+            _ingest(db, *refused)
+        assert isinstance(stop.value.code, str)  # the interpreter prints it and exits 1
+        codes.add(1)
+    assert _model(db) == before
+    with pytest.raises(SystemExit) as stop:
+        _ingest(db, "--k8s")
+    codes.add(stop.value.code)
+    assert codes == {0, 1, 2, 3}
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        cli(["ingest", "--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    epilog = text[text.index("exit status: "):]
+    assert re.findall(r"(?:status:|,) (\d) ", epilog) == ["0", "1", "2", "3"], epilog
+
+
+def test_noted_repeat_is_named_when_another_collector_fails_in_the_same_ingest(tmp_path, capsys):
+    db = _chain_db(tmp_path, capsys)
+    assert _ingest(db, *_truncated(tmp_path), at=FAILED_AT) == 2
+    broken_ai = tmp_path / "broken-ai.json"
+    broken_ai.write_text('{"format": ')
+    capsys.readouterr()
+    # One ingest: the k8s snapshot the model holds, sent again after a failed export, and an
+    # AI inventory that cannot be read.
+    assert _ingest(db, *K8S, "--ai", str(broken_ai)) == 2
+    out = capsys.readouterr()
+    lines = out.out.splitlines()
+    assert lines[0] == REPEAT and lines[1].startswith("note: source k8s.state: FAILED at ")
+    assert lines[2:] == [AGAIN]
+    assert out.err.startswith("collector failed: ai inventory: ")
+    # Control: with no k8s failure, the repeat has no note; the AI failure still exits 2.
+    db = str(tmp_path / "ok.db")
+    assert _ingest(db, *AWS, *K8S, *AI) == 0
+    capsys.readouterr()
+    assert _ingest(db, *K8S, "--ai", str(broken_ai), at=SNAPSHOT_AT) == 2
+    out = capsys.readouterr()
+    assert out.out.splitlines() == [REPEAT] and out.err.startswith("collector failed: ai inventory: ")

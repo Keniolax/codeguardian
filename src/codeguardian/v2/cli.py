@@ -38,9 +38,10 @@ def add_subcommands(sub):
                                         " its manifest gives the time")
     p.add_argument("--k8s-export", help="directory written by `python -m codeguardian.export k8s`;"
                                         " its manifest gives the time and the cluster name")
-    p.epilog = ("exit status: 0 every snapshot applied or already in the model, 2 a collector failed or a"
-                " snapshot sent again is of a source that is not current (a note says why), 3 a snapshot"
-                " was refused")
+    p.epilog = ("exit status: 0 every snapshot applied or already in the model, 1 the options were refused"
+                " and the model is unchanged, 2 a collector failed, a snapshot sent again is of a source"
+                " that is not current (a note says why), or the command line was not understood, 3 a"
+                " snapshot was refused")
 
     p = common(sub.add_parser("watch", help="process events one by one as they arrive"))
     p.add_argument("--input", default="-", help="NDJSON file, or - for stdin")

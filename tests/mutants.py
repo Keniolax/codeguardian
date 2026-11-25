@@ -51,6 +51,9 @@ ASK_REFUSED = "test_ask_refused_query_exits_2_with_nothing_on_stdout_even_from_a
 ASK_NO_MATCH = "test_ask_query_that_cannot_match_exits_2"
 REPEAT_NOTED = "test_repeat_of_a_source_that_is_not_current_notes_it_and_exits_2"
 REPEAT_FIRST = "test_noted_repeat_exits_2_before_a_refusal_in_the_same_ingest"
+REPEAT_EVERY = "test_repeat_names_every_source_and_every_reason_that_is_not_current"
+REPEAT_FAILED = "test_noted_repeat_is_named_when_another_collector_fails_in_the_same_ingest"
+INGEST_CODES = "test_ingest_help_names_every_code_ingest_exits_with"
 RESTS_ON = "test_an_answer_rests_on_the_find_type_each_edge_and_each_step_end"
 TYPE_SRC = "test_type_sources_name_the_collector_of_every_entity_and_edge_in_the_models"
 AWS = V2 + "collectors/aws.py"
@@ -1227,6 +1230,22 @@ MUTANTS = [
      [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
     ("a refusal's exit 3 comes before a noted repeat's 2", CLI, "    return 2 if noted else 3 if refused else 0",
      "    return 3 if refused else 2 if noted else 0", [T(REPEAT_FIRST, SOURCES)]),
+    # The review of slice 2f: every source and every reason, a failure in the same ingest, exit 1.
+    ("a repeat notes only the first reason its source is not current", CLI,
+     '            for line in held:\n                print(f"note: {term(line)}")\n',
+     '            for line in held[:1]:\n                print(f"note: {term(line)}")\n', [T(REPEAT_EVERY, SOURCES)]),
+    ("only the first source sent again is checked", CLI, "            held = not_current(store, name, clock.now())",
+     "            held = [] if noted else not_current(store, name, clock.now())", [T(REPEAT_EVERY, SOURCES)]),
+    ("a repeat's last note names k8s.state whatever was sent", CLI, "the facts of {name} still hold",
+     "the facts of k8s.state still hold", [T(REPEAT_EVERY, SOURCES)]),
+    ("a repeat of the AI inventory is not checked", CLI, "            held = not_current(store, name, clock.now())",
+     '            held = not_current(store, name, clock.now()) if name != "ai.inventory" else []',
+     [T(REPEAT_EVERY, SOURCES)]),
+    ("a repeat's last note dropped when another collector failed", CLI, "            if held:\n                print(",
+     "            if held and not errors:\n                print(", [T(REPEAT_FAILED, SOURCES)]),
+    ("ingest's help does not name exit 1", CLI,
+     'in the model, 1 the options were refused"\n                " and the model is unchanged, 2 a',
+     'in the model,"\n                " 2 a', [T(INGEST_CODES, SOURCES)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 
