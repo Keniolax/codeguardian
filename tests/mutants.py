@@ -51,6 +51,11 @@ ASK_REFUSED = "test_ask_refused_query_exits_2_with_nothing_on_stdout_even_from_a
 ASK_NO_MATCH = "test_ask_query_that_cannot_match_exits_2"
 RESTS_ON = "test_an_answer_rests_on_the_find_type_each_edge_and_each_step_end"
 TYPE_SRC = "test_type_sources_name_the_collector_of_every_entity_and_edge_in_the_models"
+ASK_IRSA = "test_ask_filter_on_irsa_status_rests_on_the_aws_collector_too"
+ASK_EVERY_SOURCE = "test_ask_names_every_source_it_rests_on_that_is_not_current"
+ASK_EVERY_REASON = "test_ask_names_every_reason_a_source_is_not_current"
+ASK_FAILED = "test_ask_failed_model_call_is_no_answer_and_exits_2"
+EVERY_STEP = "test_every_step_of_a_walk_adds_the_sources_of_its_far_end"
 AWS = V2 + "collectors/aws.py"
 
 
@@ -1209,6 +1214,42 @@ MUTANTS = [
      + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES]),
     ("a refused query exits 0", CLI, '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 2',
      '            print(f"query refused: {term(exc)}", file=sys.stderr)\n            return 0', [T(ASK_REFUSED, SOURCES)]),
+    # Found by the review of slice 2e on 2026-11-25.
+    ("a filter on irsa_status rests on the k8s collector only", ASKS,
+     '        names.update(ATTR_SOURCES.get((q["find"], c["attr"]), ()))', "        pass", [T(ASK_IRSA, SOURCES)]),
+    ("ATTR_SOURCES leaves out irsa_status", V2 + "schema.py", '    ("service_account", "irsa_status"): ("aws.state",),\n',
+     "", [T(ASK_IRSA, SOURCES)]),
+    ("every filter rests on the AWS collector", ASKS, 'ATTR_SOURCES.get((q["find"], c["attr"]), ())',
+     'ATTR_SOURCES.get((q["find"], c["attr"]), ("aws.state",))', [T(ASK_IRSA, SOURCES)]),
+    ("only the first step of a walk adds its sources", ASKS,
+     "            names.update(TYPE_SOURCES[t])\n    order", "            names.update(TYPE_SOURCES[t])\n        break\n    order",
+     [T(EVERY_STEP, SOURCES)]),
+    ("ask checks only the first source its answer rests on", CLI, 'for name in sources(result["query"]) for line',
+     'for name in sources(result["query"])[:1] for line', [T(ASK_EVERY_SOURCE, SOURCES)]),
+    ("ask prints only the first note", CLI, '        for line in held:\n            print(f"note: {term(line)}")',
+     '        for line in held[:1]:\n            print(f"note: {term(line)}")',
+     [T(ASK_EVERY_SOURCE, SOURCES), T(ASK_EVERY_REASON, SOURCES)]),
+    ("one reason per source", V2 + "render.py", "            held.append(refused_line(r))\n    return held",
+     "            held.append(refused_line(r))\n    return held[:1]", [T(ASK_EVERY_REASON, SOURCES)]),
+    ("a conflict measured from the last attempt, not the last good run", V2 + "render.py",
+     '    last = (s or {}).get("last_success") or ""', '    last = (s or {}).get("last_attempt") or ""',
+     [T(ASK_EVERY_REASON, SOURCES)]),
+    ("a failed model call escapes as an error", CLI,
+     "        except Exception as exc:  # a failed model call, or an answer that cannot be read, is no answer\n"
+     '            print(f"no answer: {term(type(exc).__name__)}: {term(exc)}", file=sys.stderr)\n            return 2\n',
+     "", [T(ASK_FAILED, SOURCES)]),
+    ("a failed model call exits 0", CLI,
+     '            print(f"no answer: {term(type(exc).__name__)}: {term(exc)}", file=sys.stderr)\n            return 2',
+     '            print(f"no answer: {term(type(exc).__name__)}: {term(exc)}", file=sys.stderr)\n            return 0',
+     [T(ASK_FAILED, SOURCES)]),
+    ("a failed model call's error not escaped", CLI,
+     'is no answer\n            print(f"no answer: {term(type(exc).__name__)}: {term(exc)}"',
+     'is no answer\n            print(f"no answer: {type(exc).__name__}: {exc}"', [T(ASK_FAILED, SOURCES)]),
+    ("ask with no saved answer exits 1", CLI,
+     '                print("codeguardian ask: error: --provider recorded needs --answer", file=sys.stderr)\n'
+     "                return 2",
+     '                print("codeguardian ask: error: --provider recorded needs --answer", file=sys.stderr)\n'
+     "                return 1", [T(ASK_FAILED, SOURCES)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 

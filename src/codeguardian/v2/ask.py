@@ -23,7 +23,7 @@ the command can say when one of them is not current.
 import json
 
 from . import rules as R
-from .schema import EDGE_MEANINGS, EDGE_SOURCES, EDGE_TYPES, ENTITY_TYPES, TYPE_SOURCES
+from .schema import ATTR_SOURCES, EDGE_MEANINGS, EDGE_SOURCES, EDGE_TYPES, ENTITY_TYPES, TYPE_SOURCES
 
 MAX_LIMIT = 100
 KEYS = {"find", "where", "related", "limit"}
@@ -153,11 +153,14 @@ def cannot_match(store, q):
 
 def sources(q):
     """The collectors an answer to a checked query rests on: those that write the "find"
-    type, each walked edge, and the types at the far end of each step (its "to" type, or
-    without one every type the edge joins at that end), in the order `findings` lists them."""
+    type and each attr its "where" filters on, each walked edge, and the types at the far
+    end of each step (its "to" type, or without one every type the edge joins at that end),
+    in the order `findings` lists them."""
     from .render import COLLECTORS
 
     names = set(TYPE_SOURCES[q["find"]])
+    for c in q["where"]:
+        names.update(ATTR_SOURCES.get((q["find"], c["attr"]), ()))
     for s in q["related"]:
         names.update(EDGE_SOURCES.get(s["edge"], ()))
         pairs = EDGE_MEANINGS[s["edge"]][1] or ()

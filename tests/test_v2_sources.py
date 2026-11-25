@@ -14,6 +14,7 @@ from codeguardian.cli import main as cli
 from codeguardian.v2 import ask as ask_module
 from codeguardian.v2 import render
 from codeguardian.v2.ask import sources
+from codeguardian.v2.explain import RecordedProvider
 from codeguardian.v2.pipeline import Pipeline
 from codeguardian.v2.render import COLLECTORS, safe
 from codeguardian.v2.rules import load_rules
@@ -21,7 +22,7 @@ from codeguardian.v2.schema import EDGE_SOURCES, ENTITY_TYPES, TYPE_SOURCES, Fix
 from codeguardian.v2.store import Store
 from test_v2_netpol import LAYOUT
 from test_v2_users import group, user, with_iam
-from v2_helpers import AGENT, FX, NOW, POD, SNAPSHOT_AT, build, chain
+from v2_helpers import AGENT, FX, NOW, POD, SA, SNAPSHOT_AT, build, chain
 
 FAILED_AT = "2026-11-14T10:10:00Z"
 LATER = "2026-11-14T10:15:00Z"
@@ -212,3 +213,110 @@ def test_ask_query_that_cannot_match_exits_2(tmp_path, capsys):
     # Control: the same question on the right edge is an answer from current sources.
     assert cli([*args, str(FX / "ask-answer.json")]) == 0
     assert "Not an answer" not in capsys.readouterr().out
+
+
+# --- found by the review of 2026-11-25 ----------------------------------------------------------
+
+IRSA_VERIFIED = {"find": "service_account", "where": [{"attr": "irsa_status", "op": "eq", "value": "trust verified"}],
+                 "related": [], "limit": 20}
+SA_BY_NAME = {"find": "service_account", "where": [{"attr": "name", "op": "eq", "value": "sentinel-agent"}],
+              "related": [], "limit": 20}
+
+
+def test_every_step_of_a_walk_adds_the_sources_of_its_far_end():
+    # Which pods run an agent that can call this tool: the second step reaches pods.
+    two_steps = {"find": "tool", "where": [], "limit": 20,
+                 "related": [{"edge": "can_call", "dir": "in", "to": "agent"},
+                             {"edge": "contains", "dir": "in", "to": "pod"}]}
+    assert sources(two_steps) == ["k8s.state", "ai.inventory"]
+    # Control: the first step alone rests on the AI inventory only.
+    assert sources({**two_steps, "related": two_steps["related"][:1]}) == ["ai.inventory"]
+
+
+def test_ask_filter_on_irsa_status_rests_on_the_aws_collector_too(tmp_path, capsys):
+    # irsa_status says whether the role a service account names exists and trusts it. The
+    # pipeline computes it from the AWS roles, so with none read "no rows" must not read as
+    # "no service account can take a role".
+    db = str(tmp_path / "no-aws.db")
+    assert _ingest(db, *K8S, *AI) == 0
+    capsys.readouterr()
+    assert _ask(tmp_path, db, IRSA_VERIFIED) == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "note: source aws.state: NEVER RUN. Nothing from it is in the model; findings do not cover it."
+    assert out[1] == NOT_EVALUATED and out[-1] == "- no rows"
+    # Control: a filter on an attr the k8s collector writes rests on k8s.state only.
+    assert _ask(tmp_path, db, SA_BY_NAME) == 0
+    out = capsys.readouterr().out
+    assert "note: " not in out and out.splitlines()[-1] == f"- {safe(SA)}"
+    # Control: once the AWS export ran, the same filter is an answer from current sources.
+    assert _ingest(db, *AWS, at=LATER) == 0
+    capsys.readouterr()
+    assert _ask(tmp_path, db, IRSA_VERIFIED) == 0
+    out = capsys.readouterr().out
+    assert "note: " not in out and out.splitlines()[-1] == f"- {safe(SA)}"
+
+
+def test_ask_names_every_source_it_rests_on_that_is_not_current(tmp_path, capsys):
+    db = str(tmp_path / "no-ai.db")
+    assert _ingest(db, *AWS, *K8S) == 0
+    assert _ingest(db, *_truncated(tmp_path), at=FAILED_AT) == 2
+    capsys.readouterr()
+    assert _ask(tmp_path, db, AGENT_PODS) == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith(f"note: {NOT_CURRENT['failed'][1]}"), out
+    assert out[1] == "note: source ai.inventory: NEVER RUN. Nothing from it is in the model; findings do not cover it."
+    assert out[2] == NOT_EVALUATED
+    # Control: once the inventory ran, only the failed k8s.state is named.
+    assert _ingest(db, *AI, at=LATER) == 0
+    capsys.readouterr()
+    assert _ask(tmp_path, db, AGENT_PODS) == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith(f"note: {NOT_CURRENT['failed'][1]}") and out[1] == NOT_EVALUATED
+
+
+def test_ask_names_every_reason_a_source_is_not_current(tmp_path, capsys):
+    # A conflict at the time of the snapshot the model holds, then a failed export: two
+    # reasons, two notes, as findings would list them.
+    db = _chain_db(tmp_path, capsys)
+    assert _ingest(db, *_other_k8s(tmp_path)) == 3
+    assert _ingest(db, *_truncated(tmp_path), at=FAILED_AT) == 2
+    capsys.readouterr()
+    assert _ask(tmp_path, db, AGENT_PODS) == 2
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith(f"note: {NOT_CURRENT['failed'][1]}"), out
+    assert out[1].startswith(f"note: {NOT_CURRENT['conflict'][1]}")
+    assert out[2] == NOT_EVALUATED
+    # Control: a good snapshot taken later clears both; the conflict before it is history.
+    assert _ingest(db, *K8S, at=LATER) == 0
+    capsys.readouterr()
+    assert _ask(tmp_path, db, AGENT_PODS) == 0
+    assert "note: " not in capsys.readouterr().out
+
+
+def test_ask_failed_model_call_is_no_answer_and_exits_2(tmp_path, capsys, monkeypatch):
+    db = _chain_db(tmp_path, capsys)
+    # A saved answer that is not JSON, and one that is not there: no answer, exit 2.
+    broken = tmp_path / "broken.json"
+    broken.write_text('{"query": ')
+    for path in (broken, tmp_path / "missing.json"):
+        assert cli(["ask", "--db", db, "--now", NOW, "--question", "q", "--provider", "recorded",
+                    "--answer", str(path)]) == 2
+        out = capsys.readouterr()
+        assert out.out == "" and out.err.startswith("no answer: ") and out.err.count("\n") == 1
+    # A model call that fails with hostile text in its error cannot forge a line.
+    def failing(self, system, user, schema):
+        raise RuntimeError("model down\n- k8s:pod:x\x1b[2J\x9b\u200f")
+
+    monkeypatch.setattr(RecordedProvider, "complete_json", failing)
+    assert _ask(tmp_path, db, AGENTS) == 2
+    out = capsys.readouterr()
+    assert out.out == "" and out.err.startswith("no answer: RuntimeError: model down") and out.err.count("\n") == 1
+    assert not any(c in out.err for c in "\x1b\x9b\r\u200f") and "\n- k8s:pod:x" not in out.err
+    monkeypatch.undo()
+    # A usage error of ask exits 2 as well.
+    assert cli(["ask", "--db", db, "--now", NOW, "--question", "q", "--provider", "recorded"]) == 2
+    out = capsys.readouterr()
+    assert out.out == "" and out.err == "codeguardian ask: error: --provider recorded needs --answer\n"
+    # Control: a saved answer that reads is an answer from current sources.
+    assert _ask(tmp_path, db, AGENTS) == 0
+    assert capsys.readouterr().out.splitlines()[-1] == AGENT_ROW

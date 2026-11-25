@@ -97,6 +97,13 @@ TYPE_SOURCES = {
     "tool": ("ai.inventory",),
 }
 
+# (entity type, attr) -> the other collectors whose facts the pipeline computes the attr
+# from. irsa_status says whether the IAM role a service account names exists and trusts
+# it, so a filter on it rests on the AWS collector as well as on the k8s one.
+ATTR_SOURCES = {
+    ("service_account", "irsa_status"): ("aws.state",),
+}
+
 EVENT_SOURCES = {
     "aws.cloudtrail": "cloud",
     "k8s.audit": "kubernetes",

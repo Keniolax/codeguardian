@@ -57,8 +57,8 @@ def add_subcommands(sub):
 
     p = common(sub.add_parser("ask", help="ask a question; the model writes a query, code checks and runs it",
                               epilog="exit status: 0 an answer from sources that are current, 2 no answer to act on"
-                                     " (the query was refused or cannot match anything, or a note names a source"
-                                     " the answer rests on that is not current)"))
+                                     " (the model call failed, the query was refused or cannot match anything, or a"
+                                     " note names a source the answer rests on that is not current)"))
     p.add_argument("--question", required=True)
     p.add_argument("--provider", default="anthropic", choices=["anthropic", "ollama", "recorded"])
     p.add_argument("--answer", help="with --provider recorded: a saved model answer to replay")
@@ -149,24 +149,32 @@ def run(a):
     if a.cmd in ("explain", "ask"):
         from .explain import RecordedProvider, explain
 
-        if a.provider == "recorded":
-            if not a.answer:
-                raise SystemExit("--provider recorded needs --answer")
-            provider = RecordedProvider(a.answer)
-        else:
+        def provider():
+            if a.provider == "recorded":
+                return RecordedProvider(a.answer)
             from ..providers import get_provider
 
-            provider = get_provider(a.provider)
+            return get_provider(a.provider)
+
+        if a.provider == "recorded" and not a.answer:
+            if a.cmd == "ask":
+                print("codeguardian ask: error: --provider recorded needs --answer", file=sys.stderr)
+                return 2
+            raise SystemExit("--provider recorded needs --answer")
         if a.cmd == "explain":
-            sys.stdout.write(render.explanation(explain(store, _incident(store, a.incident), provider)))
+            p = provider()
+            sys.stdout.write(render.explanation(explain(store, _incident(store, a.incident), p)))
             return 0
         from .ask import QueryError, ask, sources
         from .render import not_current, term
 
         try:
-            result = ask(store, a.question, provider)
+            result = ask(store, a.question, provider())
         except QueryError as exc:
             print(f"query refused: {term(exc)}", file=sys.stderr)
+            return 2
+        except Exception as exc:  # a failed model call, or an answer that cannot be read, is no answer
+            print(f"no answer: {term(type(exc).__name__)}: {term(exc)}", file=sys.stderr)
             return 2
         # An answer from facts that may not hold now is not one to act on: "no rows" from a
         # collector that never ran would read as "none".
