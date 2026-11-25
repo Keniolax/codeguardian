@@ -49,6 +49,11 @@ ASK_NOT_CURRENT = "test_ask_notes_a_failed_stale_or_conflicting_source_it_rests_
 ASK_FORGE = "test_ask_note_and_findings_on_a_failed_source_cannot_forge_a_line"
 ASK_REFUSED = "test_ask_refused_query_exits_2_with_nothing_on_stdout_even_from_a_failed_source"
 ASK_NO_MATCH = "test_ask_query_that_cannot_match_exits_2"
+REPEAT_NOTED = "test_repeat_of_a_source_that_is_not_current_notes_it_and_exits_2"
+REPEAT_FIRST = "test_noted_repeat_exits_2_before_a_refusal_in_the_same_ingest"
+REPEAT_EVERY = "test_repeat_names_every_source_and_every_reason_that_is_not_current"
+REPEAT_FAILED = "test_noted_repeat_is_named_when_another_collector_fails_in_the_same_ingest"
+INGEST_CODES = "test_ingest_help_names_every_code_ingest_exits_with"
 RESTS_ON = "test_an_answer_rests_on_the_find_type_each_edge_and_each_step_end"
 TYPE_SRC = "test_type_sources_name_the_collector_of_every_entity_and_edge_in_the_models"
 ASK_IRSA = "test_ask_filter_on_irsa_status_rests_on_the_aws_collector_too"
@@ -585,7 +590,8 @@ MUTANTS = [
      '    elif seconds_between(s["last_success"], now) > REFRESH_SECONDS[name]:',
      '    elif False:',
      [T("test_source_past_its_refresh_period_is_shown_stale", CORE), T(f"{NOT_CURRENT}[stale]", SHADOW),
-      T(f"{ASK_NOT_CURRENT}[stale]", SOURCES)]),
+      T(f"{ASK_NOT_CURRENT}[stale]", SOURCES),
+      T(f"{REPEAT_NOTED}[stale]", SOURCES)]),
     # Export: read-only, and missing knowledge is not safe.
     ("export runs commands that are not on the read-only list", EXPORT,
      "    if not allowed(argv):", "    if False:",
@@ -995,10 +1001,12 @@ MUTANTS = [
      '    return REACH_EXIT["not evaluated"] if held and code != NO_ANSWER else code', "    return code",
      [T(f"{NOT_CURRENT}[{c}]", SHADOW) for c in NOT_CURRENT_CASES] + [T(FORGE, SHADOW), T(OTHER_CONFLICT, SHADOW)]),
     ("a failed source reads as current", V2 + "render.py", '    elif s["status"] != "ok":', "    elif False:",
-     [T(f"{NOT_CURRENT}[failed]", SHADOW), T(FORGE, SHADOW), T(f"{ASK_NOT_CURRENT}[failed]", SOURCES)]),
+     [T(f"{NOT_CURRENT}[failed]", SHADOW), T(FORGE, SHADOW), T(f"{ASK_NOT_CURRENT}[failed]", SOURCES),
+      T(f"{REPEAT_NOTED}[failed]", SOURCES), T(REPEAT_FIRST, SOURCES)]),
     ("a conflict at the time of the model's snapshot not noted", V2 + "render.py",
      '        if r["source"] == source and r["at"] >= last:', "        if False:",
-     [T(f"{NOT_CURRENT}[conflict]", SHADOW), T(OTHER_CONFLICT, SHADOW), T(f"{ASK_NOT_CURRENT}[conflict]", SOURCES)]),
+     [T(f"{NOT_CURRENT}[conflict]", SHADOW), T(OTHER_CONFLICT, SHADOW), T(f"{ASK_NOT_CURRENT}[conflict]", SOURCES),
+      T(f"{REPEAT_NOTED}[conflict]", SOURCES)]),
     ("a conflict older than the model's snapshot still noted", V2 + "render.py",
      '        if r["source"] == source and r["at"] >= last:', '        if r["source"] == source:',
      [T(f"{NOT_CURRENT}[conflict]", SHADOW)]),
@@ -1174,8 +1182,8 @@ MUTANTS = [
      "            out.append(f\"  path: {' -> '.join(safe(p, 300) for p in f['path'])}\")",
      "            out.append(f\"  path: {' -> '.join(p for p in f['path'])}\")", [T(HIST_OUT, ORDER)]),
     ("findings --history ignored", V2 + "cli.py", "        if a.history:", "        if False:", [T(HIST_OUT, ORDER)]),
-    ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 3 if refused else 0", "    return 0",
-     [T(INGEST, ORDER)]),
+    ("ingest exits 0 after a refusal", V2 + "cli.py", "    return 2 if noted else 3 if refused else 0",
+     "    return 2 if noted else 0", [T(INGEST, ORDER), T(REPEAT_FIRST, SOURCES)]),
     # Slice snapshot-repeat: only the last snapshot applied is a repeat.
     ("a snapshot applied before a newer one reads as a repeat when sent again", PL,
      "        if at == last and any(", "        if any(", [T(REPEAT, ORDER), T(NORMALISED, ORDER)]),
@@ -1232,7 +1240,8 @@ MUTANTS = [
     ("ask notes a source but exits 0", CLI, '        return 2 if held or result["cannot_match"] else 0',
      '        return 2 if result["cannot_match"] else 0',
      [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES), T(ASK_REFUSED, SOURCES)]),
-    ("ask exits 2 with no note", CLI, '            print(f"note: {term(line)}")', "            pass",
+    ("ask exits 2 with no note", CLI, '        for line in held:\n            print(f"note: {term(line)}")\n        if held:',
+     "        for line in held:\n            pass\n        if held:",
      [T(ASK_NEVER_RAN, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(ASK_FORGE, SOURCES)]),
     ("ask notes a source without saying the answer is not evaluated", CLI,
      '            print("note: the answer below rests on facts that may not hold now, so it counts as not evaluated")',
@@ -1284,6 +1293,34 @@ MUTANTS = [
     ("only the first filter adds the sources of its attr", ASKS,
      'for c in q["where"]:\n        names.update(ATTR', 'for c in q["where"][:1]:\n        names.update(ATTR',
      [T(EVERY_FILTER, SOURCES)]),
+    # A snapshot sent again names a source that is not current (slice 2f).
+    ("a repeat ignores a source that is not current", CLI, "            held = not_current(store, name, clock.now())",
+     "            held = []", [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a repeat's note not printed", CLI, '                print(f"note: {term(line)}")', "                pass",
+     [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a repeat's note does not say the snapshot sent again shows nothing", CLI,
+     '                print(f"note: sending this snapshot again', '                pass  # print(f"note: sending this snapshot again',
+     [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a noted repeat exits 0", CLI, "    return 2 if noted else 3 if refused else 0", "    return 3 if refused else 0",
+     [T(f"{REPEAT_NOTED}[{c}]", SOURCES) for c in NOT_CURRENT_CASES] + [T(REPEAT_FIRST, SOURCES)]),
+    ("a refusal's exit 3 comes before a noted repeat's 2", CLI, "    return 2 if noted else 3 if refused else 0",
+     "    return 3 if refused else 2 if noted else 0", [T(REPEAT_FIRST, SOURCES)]),
+    # The review of slice 2f: every source and every reason, a failure in the same ingest, exit 1.
+    ("a repeat notes only the first reason its source is not current", CLI,
+     '            for line in held:\n                print(f"note: {term(line)}")\n',
+     '            for line in held[:1]:\n                print(f"note: {term(line)}")\n', [T(REPEAT_EVERY, SOURCES)]),
+    ("only the first source sent again is checked", CLI, "            held = not_current(store, name, clock.now())",
+     "            held = [] if noted else not_current(store, name, clock.now())", [T(REPEAT_EVERY, SOURCES)]),
+    ("a repeat's last note names k8s.state whatever was sent", CLI, "the facts of {name} still hold",
+     "the facts of k8s.state still hold", [T(REPEAT_EVERY, SOURCES)]),
+    ("a repeat of the AI inventory is not checked", CLI, "            held = not_current(store, name, clock.now())",
+     '            held = not_current(store, name, clock.now()) if name != "ai.inventory" else []',
+     [T(REPEAT_EVERY, SOURCES)]),
+    ("a repeat's last note dropped when another collector failed", CLI, "            if held:\n                print(",
+     "            if held and not errors:\n                print(", [T(REPEAT_FAILED, SOURCES)]),
+    ("ingest's help does not name exit 1", CLI,
+     'in the model, 1 the options were refused"\n                " and the model is unchanged, 2 a',
+     'in the model,"\n                " 2 a', [T(INGEST_CODES, SOURCES)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 

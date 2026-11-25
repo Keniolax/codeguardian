@@ -433,11 +433,15 @@ own data, not by when it arrives.
   changes nothing. `ingest` prints why and exits 3, each time the snapshot is sent. This
   is also true for a snapshot that the model applied before a newer one came, because
   the model no longer holds it. Only the last snapshot applied, sent again, changes
-  nothing with exit 0. A different snapshot with the same time as one already taken is
-  refused and listed as not evaluated, because which of the two held is not known. A
-  broken export older than the last good one does not mark its collector failed. A good
-  snapshot older than a broken export, or taken at the same time, does not clear the
-  failure.
+  nothing, and `ingest` exits 0. But if that collector is not current (its last export
+  failed, its last good snapshot is past the refresh period, or a snapshot of it was
+  refused as a conflict), `ingest` adds a note in the words of `findings` and exits 2: a
+  snapshot sent again does not show that the facts still hold. In one `ingest`, that exit
+  2 comes before a refusal's 3. A different snapshot with the same time as one already
+  taken is refused and listed as not evaluated, because which of the two held is not
+  known. A broken export older than the last good one does not mark its collector failed.
+  A good snapshot older than a broken export, or taken at the same time, does not clear
+  the failure.
 - An IAM change record for a role the model does not hold yet waits. When a snapshot
   brings the role, the record applies unless it is older than that snapshot. A record
   with the same time as a snapshot counts after it, whichever of the two arrives first.
@@ -457,6 +461,18 @@ own data, not by when it arrives.
 - The journal keeps a full copy of each snapshot, so the database grows by the size of
   each export, and `findings --history` replays all of it on each call. A held record
   whose actor never appears stays held and is checked again after every snapshot.
+
+A review on 2026-11-25 sent snapshots again on inputs that the tests did not hold, on the
+recorded fixtures. The notes held for each one: three collectors not current in one
+`ingest`, two reasons for one collector, another collector failing in the same `ingest`,
+and a pod name with a newline, escape codes and markup in the error text. Five checks
+behind the notes had no test; each has one now. The review fixed one fault: `ingest
+--help` named the exit codes 0, 2 and 3, but `ingest` exits 1 when it refuses its options
+and 2 when it cannot parse the command line. The help now names both. One gap is open.
+`ingest` applies a new snapshot that is older than a failed export, or already past its
+refresh period, and exits 0 with no note, while `findings` then says FAILED or STALE.
+After the fixes, 393 tests pass (107 for v1, 286 for v2), and the mutation run removes
+362 controls: 549 mutant-test pairs, all caught.
 
 After the commands above, print the history, then give `ingest` an AWS export older than
 the one it holds:

@@ -38,6 +38,10 @@ def add_subcommands(sub):
                                         " its manifest gives the time")
     p.add_argument("--k8s-export", help="directory written by `python -m codeguardian.export k8s`;"
                                         " its manifest gives the time and the cluster name")
+    p.epilog = ("exit status: 0 every snapshot applied or already in the model, 1 the options were refused"
+                " and the model is unchanged, 2 a collector failed, a snapshot sent again is of a source"
+                " that is not current (a note says why), or the command line was not understood, 3 a"
+                " snapshot was refused")
 
     p = common(sub.add_parser("watch", help="process events one by one as they arrive"))
     p.add_argument("--input", default="-", help="NDJSON file, or - for stdin")
@@ -193,7 +197,7 @@ def _ingest(a, store, pipe, clock):
     import ipaddress
 
     from .collectors import CollectorError, manifest
-    from .render import term
+    from .render import not_current, term
 
     if a.outside_source:
         for cidr in a.outside_source:
@@ -236,7 +240,7 @@ def _ingest(a, store, pipe, clock):
     if any(typed.values()):
         jobs.append({**typed, "at": a.at and _ts(a.at)})
     opened = resolved = 0
-    refused, stale = [], bool(errors)
+    refused, stale, noted = [], bool(errors), []
     for job in jobs:
         try:
             changes = pipe.snapshot(**job)
@@ -248,6 +252,14 @@ def _ingest(a, store, pipe, clock):
         refused += changes["refused"]
         for name in changes["unchanged"]:
             print(f"{name}: this snapshot is already in the model; nothing changed")
+            # A repeat proves nothing new: when the source failed, is stale or holds a
+            # conflict, the model's facts may not hold now, as findings says.
+            held = not_current(store, name, clock.now())
+            for line in held:
+                print(f"note: {term(line)}")
+            if held:
+                print(f"note: sending this snapshot again does not show that the facts of {name} still hold")
+                noted.append(name)
     store.commit()
     for name, verdict, reason in refused:
         print(f"snapshot refused: {name}: {term(reason)}; nothing changed", file=sys.stderr)
@@ -258,7 +270,7 @@ def _ingest(a, store, pipe, clock):
             print("its facts are now marked stale; nothing it wrote before was deleted", file=sys.stderr)
         return 2
     print(f"opened {opened}, resolved {resolved} findings")
-    return 3 if refused else 0
+    return 2 if noted else 3 if refused else 0
 
 
 def _port_number(text):

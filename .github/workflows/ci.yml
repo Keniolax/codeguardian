@@ -3,7 +3,7 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main, v2-platform, v2-exports, v2/netpol, v2/netpol-shadow, v2/snapshot-order, v2/ask-edges, v2/iam-users, v2/snapshot-repeat, v2/ask-sources]
+    branches: [main, v2-platform, v2-exports, v2/netpol, v2/netpol-shadow, v2/snapshot-order, v2/ask-edges, v2/iam-users, v2/snapshot-repeat, v2/ask-sources, v2/repeat-sources]
 
 permissions:
   contents: read
