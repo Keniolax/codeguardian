@@ -350,7 +350,8 @@ def _hostile(data):
     web["rulesets"][0]["name"] = HOSTILE
     web["deploy_keys"][0]["title"] = HOSTILE
     web["workflows"]["workflows"][0]["name"] = HOSTILE
-    entry(data, "docs-site")["deploy_keys"]["Error"]["Message"] = HOSTILE
+    web["workflows"]["workflows"][0]["path"] = ".github/workflows/" + HOSTILE
+    entry(data, "docs-site")["deploy_keys"]["Error"] = {"Code": HOSTILE, "Message": HOSTILE}
 
 
 def _clean(text):
@@ -372,14 +373,15 @@ def test_text_in_a_description_or_ruleset_name_cannot_change_a_finding_or_forge_
     assert cli(["findings", "--db", db, "--now", NOW]) == 0
     out = capsys.readouterr().out
     _clean(out)
-    assert out.count("- [open]") == len(Store(db).findings(status="open"))
+    assert out.count("- [open]") == len(Store(db).findings(status="open")) and "forged" in out  # shown, escaped
     answer = tmp_path / "answer.json"
     answer.write_text(json.dumps({"query": {"find": "repository", "where": [], "limit": 20,
-                                            "related": [{"edge": "holds", "dir": "out", "to": "deploy_key"}]},
+                                            "related": [{"edge": "contains", "dir": "out", "to": "workflow"}]},
                                   "note": HOSTILE}))
-    capsys.readouterr()
-    cli(["ask", "--db", db, "--now", NOW, "--question", "q", "--provider", "recorded", "--answer", str(answer)])
-    _clean(capsys.readouterr().out)
+    assert cli(["ask", "--db", db, "--now", NOW, "--question", "q", "--provider", "recorded", "--answer", str(answer)]) == 0
+    out = capsys.readouterr().out
+    _clean(out)
+    assert out.count("forged") == 2  # the note and the workflow path, each inside one line
 
 
 # --- the source and the walks that rest on it ---------------------------------------------------
@@ -543,6 +545,25 @@ def test_export_then_ingest_gives_the_fixture_and_keeps_no_key_text(tmp_path, fa
         cli(["ingest", "--db", db, "--now", NOW, "--github-export", str(out), "--github", str(GITHUB)])
 
 
+def test_github_manifest_without_an_owner_or_a_readable_not_evaluated_map_is_refused(tmp_path, fake_gh, capsys):
+    fake_gh(gh_plan(fx()))
+    out = tmp_path / "out"
+    assert run_export(out) == 0
+    manifest = out / "github-manifest.json"
+    good = json.loads(manifest.read_text())
+    db = str(tmp_path / "m.db")
+    for bad in ({k: v for k, v in good.items() if k != "owner"}, {**good, "not_evaluated": ["docs-site"]},
+                {**good, "not_evaluated": {f"{ORG}/docs-site": "HTTP 403"}}):
+        manifest.write_text(json.dumps(bad))
+        capsys.readouterr()
+        assert cli(["ingest", "--db", db, "--now", NOW, "--github-export", str(out)]) == 2
+        assert "collector failed" in capsys.readouterr().err
+        assert Store(db).source("github.state")["status"] == "failed"
+    # Control: the manifest as written is read.
+    manifest.write_text(json.dumps(good))
+    assert cli(["ingest", "--db", db, "--now", NOW, "--github-export", str(out)]) == 0
+
+
 def test_user_account_lists_private_repositories_only_with_its_own_token(tmp_path, fake_gh):
     data = fx()
     _as_user(data, "owner")
@@ -643,10 +664,11 @@ def test_export_runs_no_write_call_under_any_input(tmp_path, fake_gh, capsys):
     # An owner that is not a login is refused before any call.
     fake_gh(plan)
     log_before = len(fake_gh.log())
+    capsys.readouterr()
     assert run_export(tmp_path / "o", owner="example-org/../user") == 2
     assert run_export(tmp_path / "o", owner="--method=POST") == 2
     assert len(fake_gh.log()) == log_before
-    capsys.readouterr()
+    assert capsys.readouterr().err.count("the owner is not a GitHub login") == 2
 
 
 def test_run_refuses_a_gh_call_that_is_not_a_listed_get(fake_gh):
@@ -663,6 +685,8 @@ def test_run_refuses_a_gh_call_that_is_not_a_listed_get(fake_gh):
         ["gh", "api", f"repos/:owner/:repo/keys?{PAGE}"],
         ["gh", "api", f"repos/{ORG}/web-frontend/keys?{PAGE}&x=1"],
         ["gh", "api", f"repos/{ORG}/../user/keys?{PAGE}"],
+        ["gh", "api", f"repos/{ORG}/../keys?{PAGE}"],
+        ["gh", "api", f"repos/{ORG}/web-frontend/branches/.."],
         ["gh", "api", "user/keys"],
         ["gh", "api", f"repos/{ORG}/web-frontend"],
         ["gh", "api"],

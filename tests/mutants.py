@@ -8,9 +8,9 @@ pytest exits with code 1 (tests failed). Exit code 2 or more means the mutant br
 collection or imports, which proves nothing, so it is reported as broken. The run fails
 if any mutant survives or breaks, if the tree is not clean afterwards, or if a test whose
 name starts with test_a_ to test_f_, or any test in the export, NetworkPolicy, -NP, order,
-IAM user or source files, has no mutant, or any test in the ask file after the three named
-in ASK_BEFORE_2C. In the NetworkPolicy, -NP, order, IAM user and source files every
-parametrized case must also have a mutant of its own.
+IAM user, source or GitHub files, has no mutant, or any test in the ask file after the three
+named in ASK_BEFORE_2C. In the NetworkPolicy, -NP, order, IAM user, source and GitHub files
+every parametrized case must also have a mutant of its own.
 
 The reviewer's week 17 mutants live in tests/mutants_week17.py, which is frozen with the
 reviewer; this file runs them after its own.
@@ -63,6 +63,25 @@ ASK_FAILED = "test_ask_failed_model_call_is_no_answer_and_exits_2"
 EVERY_STEP = "test_every_step_of_a_walk_adds_the_sources_of_its_far_end"
 EVERY_FILTER = "test_every_filter_of_a_query_adds_the_sources_of_its_attr"
 AWS = V2 + "collectors/aws.py"
+GH = "tests/test_v2_github.py"
+GHC = V2 + "collectors/github.py"
+GH_CLASSIC = "test_classic_protection_requires_a_check_only_when_enforced_and_named"
+GH_NOT_NONE = "test_a_check_setting_the_collector_does_not_read_is_not_evaluated_not_none"
+GH_WP_VALUE = "test_workflow_permission_value_the_collector_does_not_read_is_not_evaluated"
+GH_SHOWS = "test_part_that_could_not_be_read_opens_post_gh_005_and_shows"
+GH_KEEP = "test_part_that_could_not_be_read_keeps_what_the_model_last_read"
+GH_KEEP_CHECK = "test_check_setting_that_could_not_be_read_keeps_the_last_answer"
+GH_REFUSED = "test_partial_or_mixed_export_is_refused_and_the_model_stands"
+GH_HOSTILE = "test_text_in_a_description_or_ruleset_name_cannot_change_a_finding_or_forge_a_line"
+GH_NEVER_RAN = "test_github_that_never_ran_shows_and_a_walk_elsewhere_does_not_rest_on_it"
+GH_PAIRS = "test_edges_of_the_github_model_join_their_declared_pairs_and_each_pair_occurs"
+GH_ROUNDTRIP = "test_export_then_ingest_gives_the_fixture_and_keeps_no_key_text"
+GH_MANIFEST = "test_github_manifest_without_an_owner_or_a_readable_not_evaluated_map_is_refused"
+GH_USER = "test_user_account_lists_private_repositories_only_with_its_own_token"
+GH_LIST = "test_failed_account_or_repository_list_stops_the_export_and_writes_nothing"
+GH_ONE_REPO = "test_failed_call_on_one_repository_is_not_evaluated_and_the_export_goes_on"
+GH_NO_WRITE = "test_export_runs_no_write_call_under_any_input"
+GH_RUN = "test_run_refuses_a_gh_call_that_is_not_a_listed_get"
 
 
 def T(name, file=CHAIN):
@@ -419,7 +438,7 @@ MUTANTS = [
      "            os.close(os.open(path, os.O_CREAT | os.O_RDWR, 0o600))", "            pass", [T("test_model_database_file_is_readable_by_its_owner_only", USERS)]),
     # iam-users review of 2026-11-24: faults found by input, and controls that had no test.
     ("user finding drops what the resolver did not evaluate", V2 + "posture.py",
-     '    notes += ent["attrs"].get("not_evaluated", []) if ent["type"] in PRINCIPALS else []',
+     '    notes += ent["attrs"].get("not_evaluated", []) if ent["type"] in NOTED else []',
      '    notes += ent["attrs"].get("not_evaluated", []) if ent["type"] == "iam_role" else []',
      [T("test_user_finding_names_what_the_resolver_could_not_read", USERS)]),
     ("user finding drops the documents the model does not hold", V2 + "posture.py",
@@ -1119,8 +1138,8 @@ MUTANTS = [
     ("collector that only ever failed counts as run", V2 + "detect.py",
      '    return sorted(n for n in needed if (store.source(n) or {}).get("last_success") is None)',
      "    return sorted(n for n in needed if store.source(n) is None)", [T(NEVER_RAN, ORDER)]),
-    ("contains edge needs no AI inventory", V2 + "schema.py", '    "contains": ("ai.inventory",),',
-     '    "contains": (),', [T(NEVER_RAN, ORDER)]),
+    ("contains edge needs no AI inventory", V2 + "schema.py", '    ("contains", "pod", "agent"): ("ai.inventory",),',
+     '    ("contains", "pod", "agent"): (),', [T(NEVER_RAN, ORDER)]),
     ("service account edges need no k8s snapshot", V2 + "schema.py",
      '    "runs_as": ("k8s.state",),\n    "exposes": ("k8s.state",),\n    "reachable_from": ("k8s.state",),\n'
      '    "assumes": ("aws.state", "k8s.state"),',
@@ -1213,17 +1232,16 @@ MUTANTS = [
     # ask names a source its answer rests on that is not current (slice 2e).
     ("ask rests on no collector of the find type", ASKS, '    names = set(TYPE_SOURCES[q["find"]])',
      "    names = set()", [T(ASK_NEVER_RAN, SOURCES), T(RESTS_ON, SOURCES)]),
-    ("ask ignores the collectors of a walked edge", ASKS, '        names.update(EDGE_SOURCES.get(s["edge"], ()))',
+    ("ask ignores the collectors of a walked edge", ASKS, '        names.update(edge_sources(s["edge"], pairs))',
      "        pass", [T(RESTS_ON, SOURCES)]),
     ("ask ignores a step's own to type", ASKS, '        far = [s["to"]] if s.get("to") else',
      "        far = [] if s.get(\"to\") else", [T(RESTS_ON, SOURCES)] + [T(f"{ASK_NOT_CURRENT}[{c}]", SOURCES) for c in NOT_CURRENT_CASES]),
     ("ask takes the edge's end types in place of a step's to", ASKS, '        far = [s["to"]] if s.get("to") else',
      "        far = [p[1] if s[\"dir\"] == \"out\" else p[0] for p in pairs] if False else", [T(RESTS_ON, SOURCES)]),
     ("ask ignores the far end of a step with no to", ASKS,
-     '[p[1] if s["dir"] == "out" else p[0] for p in pairs]', "[]", [T(RESTS_ON, SOURCES)]),
+     "[p[1 - near] for p in pairs]", "[]", [T(RESTS_ON, SOURCES)]),
     ("ask reads the far end of a step at the near end", ASKS,
-     '[p[1] if s["dir"] == "out" else p[0] for p in pairs]', '[p[0] if s["dir"] == "out" else p[1] for p in pairs]',
-     [T(RESTS_ON, SOURCES)]),
+     "[p[1 - near] for p in pairs]", "[p[near] for p in pairs]", [T(RESTS_ON, SOURCES)]),
     ("ask lists sources in name order, not the order findings uses", ASKS,
      "    return sorted(names, key=lambda n: (order.get(n, len(order)), n))", "    return sorted(names)",
      [T(RESTS_ON, SOURCES)]),
@@ -1325,6 +1343,212 @@ MUTANTS = [
     ("ingest's help gives 2 only to a failed collector or a noted repeat", CLI,
      ' (a note says why), or the command line was not understood, 3 a"', ' (a note says why), 3 a"',
      [T(INGEST_CODES, SOURCES)]),
+    # GitHub as the first SaaS source (slice 3).
+    ("ruleset rules' required checks ignored", GHC,
+     '        if r["type"] != "required_status_checks":\n            continue',
+     '        if True:\n            continue',
+     [T("test_default_branch_without_a_required_check_opens_post_gh_001", GH), T(f"{GH_KEEP_CHECK}[branch_rules]", GH)]),
+    ("classic protection's checks ignored", GHC, '    return sorted(set(contexts) | {c["context"] for c in checks})',
+     "    return []", [T("test_default_branch_without_a_required_check_opens_post_gh_001", GH),
+                       T(f"{GH_CLASSIC}[non-admins]", GH), T(f"{GH_KEEP_CHECK}[branch]", GH)]),
+    ("a check from one source is not enough", GHC, '    if ruleset or protection:\n        return "required"',
+     '    if ruleset and protection:\n        return "required"',
+     [T("test_default_branch_without_a_required_check_opens_post_gh_001", GH)]),
+    ("POST-GH-001 fires on a setting that is not evaluated", V2 + "rules/posture.toml",
+     'where = [{ attr = "default_branch_checks", op = "eq", value = "none" }]',
+     'where = [{ attr = "default_branch_checks", op = "ne", value = "required" }]',
+     [T(f"{GH_NOT_NONE}[{c}]", GH) for c in ("unknown-level", "rule-without-parameters", "protection-missing")]
+     + [T("test_repository_without_a_default_branch_is_not_evaluated", GH)]),
+    ("enforcement off read as enforced", GHC, '    if level == "off":\n        return []',
+     '    if level == "nope":\n        return []', [T(f"{GH_CLASSIC}[enforcement-off]", GH)]),
+    ("an enforced level with no checks reads as required", GHC,
+     '    return sorted(set(contexts) | {c["context"] for c in checks})',
+     '    return sorted(set(contexts) | {c["context"] for c in checks}) or ["(any)"]', [T(f"{GH_CLASSIC}[no-checks]", GH)]),
+    ("non_admins read as not enforced", GHC, 'ENFORCED = ("non_admins", "everyone")', 'ENFORCED = ("everyone",)',
+     [T(f"{GH_CLASSIC}[non-admins]", GH)]),
+    ("an unknown enforcement level read as off", GHC, "    if level not in ENFORCED:\n        notes.append(",
+     "    if level not in ENFORCED:\n        return []\n        notes.append(", [T(f"{GH_NOT_NONE}[unknown-level]", GH)]),
+    ("a check rule of unknown form read as no check", GHC,
+     '            notes.append("a required_status_checks rule of the default branch has a form the collector does not'
+     ' read")\n            return None',
+     '            notes.append("a required_status_checks rule of the default branch has a form the collector does not'
+     ' read")\n            continue', [T(f"{GH_NOT_NONE}[rule-without-parameters]", GH)]),
+    ("missing branch protection read as none", GHC,
+     '        notes.append("classic branch protection of the default branch: not in the answer")\n        return None',
+     '        notes.append("classic branch protection of the default branch: not in the answer")\n        return []',
+     [T(f"{GH_NOT_NONE}[protection-missing]", GH)]),
+    ("a check setting not read counts as none", GHC, '    if ruleset is None or protection is None:\n        return "not evaluated"',
+     '    if False:\n        return "not evaluated"',
+     [T(f"{GH_NOT_NONE}[{c}]", GH) for c in ("unknown-level", "rule-without-parameters", "protection-missing")]
+     + [T("test_repository_without_a_default_branch_is_not_evaluated", GH), T(f"{GH_KEEP_CHECK}[branch]", GH)]),
+    ("a repository without a default branch reads as none", GHC,
+     '        attrs["ruleset_checks"] = attrs["protection_checks"] = None',
+     '        attrs["ruleset_checks"] = attrs["protection_checks"] = []',
+     [T("test_repository_without_a_default_branch_is_not_evaluated", GH)]),
+    ("read_only taken as false", GHC, '"read_only": k["read_only"],', '"read_only": False,',
+     [T("test_deploy_key_with_write_access_opens_post_gh_002_and_a_read_only_key_does_not", GH)]),
+    ("POST-GH-002 tests a read-only key", V2 + "rules/posture.toml",
+     'where = [{ attr = "read_only", op = "eq", value = false }]', 'where = [{ attr = "read_only", op = "eq", value = true }]',
+     [T("test_deploy_key_with_write_access_opens_post_gh_002_and_a_read_only_key_does_not", GH)]),
+    ("the approve flag ignored", GHC, "    return perms, approve\n", "    return perms, False\n",
+     [T("test_actions_that_may_approve_pull_requests_open_post_gh_003", GH)]),
+    ("POST-GH-003 fires when the flag is not known", V2 + "rules/posture.toml",
+     'where = [{ attr = "actions_can_approve_pull_requests", op = "eq", value = true }]',
+     'where = [{ attr = "actions_can_approve_pull_requests", op = "ne", value = false }]',
+     [T(f"{GH_WP_VALUE}[{c}]", GH) for c in ("unknown-value", "missing")]),
+    ("write by default ignored", GHC, '    if perms not in ("read", "write"):', '    if perms not in ("read",):',
+     [T("test_workflow_permissions_that_default_to_write_open_post_gh_004", GH)]),
+    ("POST-GH-004 fires when the value is not known", V2 + "rules/posture.toml",
+     'where = [{ attr = "default_workflow_permissions", op = "eq", value = "write" }]',
+     'where = [{ attr = "default_workflow_permissions", op = "ne", value = "read" }]',
+     [T(f"{GH_WP_VALUE}[{c}]", GH) for c in ("unknown-value", "missing")]),
+    ("an unknown permission value kept", GHC, "        perms = None\n    if not isinstance(approve, bool):",
+     "        pass\n    if not isinstance(approve, bool):", [T(f"{GH_WP_VALUE}[unknown-value]", GH)]),
+    ("a missing approve flag reads as false", GHC, "        approve = None\n    return perms, approve",
+     "        approve = False\n    return perms, approve", [T(f"{GH_WP_VALUE}[missing]", GH)]),
+] + [
+    (f"a failed {part} is not noted", GHC, "        if _error(entry[part]):\n            _note(notes, part,",
+     f"        if _error(entry[part]) and part != {part!r}:\n            _note(notes, part,", [T(f"{GH_SHOWS}[{part}]", GH)])
+    for part in ("branch", "branch_rules", "deploy_keys", "rulesets", "secrets", "workflow_permissions", "workflows")
+] + [
+    ("a repository finding drops what was not read", V2 + "posture.py", 'NOTED = PRINCIPALS + ("repository",)',
+     "NOTED = PRINCIPALS", [T(f"{GH_SHOWS}[{p}]", GH) for p in ("rulesets", "secrets")]),
+    ("a failed deploy key list deletes the keys", GHC, '"deploy_keys": ("holds", "deploy_key", False),', "",
+     [T(f"{GH_KEEP}[deploy_keys]", GH)]),
+    ("a failed ruleset list deletes the rulesets", GHC, '"rulesets": ("protects", "ruleset", True), ', "",
+     [T(f"{GH_KEEP}[rulesets]", GH)]),
+    ("a failed secret list deletes the secrets", GHC, '"secrets": ("holds", "actions_secret", False), ', "",
+     [T(f"{GH_KEEP}[secrets]", GH)]),
+    ("a failed workflow list deletes the workflows", GHC, '"workflows": ("contains", "workflow", False)}', "}",
+     [T(f"{GH_KEEP}[workflows]", GH)]),
+    ("failed workflow permissions forget the last answer", GHC,
+     '        perms, approve = old.get("default_workflow_permissions"), old.get("actions_can_approve_pull_requests")',
+     "        perms, approve = None, None", [T(f"{GH_KEEP}[workflow_permissions]", GH)]),
+    ("every part is kept as if it was not read", GHC, "            if _error(entry[part]):\n                keep(rid, part)",
+     "            if True:\n                keep(rid, part)",
+     [T(f"{GH_KEEP}[{p}]", GH) for p in ("deploy_keys", "rulesets", "secrets", "workflows")]),
+    ("failed ruleset rules forget the last answer", GHC, 'old.get("ruleset_checks") if _error(entry["branch_rules"])',
+     'None if _error(entry["branch_rules"])', [T(f"{GH_KEEP_CHECK}[branch_rules]", GH)]),
+    ("failed branch protection forgets the last answer", GHC, 'old.get("protection_checks") if _error(entry["branch"])',
+     'None if _error(entry["branch"])', [T(f"{GH_KEEP_CHECK}[branch]", GH)]),
+    ("a public listing deletes the private repositories it leaves out", GHC, '    if data["listing"] != "owner":',
+     "    if False:", [T("test_private_repository_a_public_listing_leaves_out_is_kept_not_deleted", GH)]),
+    ("the owner's own listing keeps a repository it leaves out", GHC, '    if data["listing"] != "owner":',
+     "    if True:", [T("test_private_repository_a_public_listing_leaves_out_is_kept_not_deleted", GH)]),
+    ("the source line leaves out the listing", GHC, "    if listed:\n        out.append(listed.format(",
+     "    if False:\n        out.append(listed.format(",
+     [T("test_github_source_line_names_what_the_export_does_not_read", GH),
+      T("test_private_repository_a_public_listing_leaves_out_is_kept_not_deleted", GH)]),
+    ("the source line leaves out the bypass lists", GHC,
+     'NEVER_READ = ("bypass lists of rulesets and branch protection (not in this export)",\n              ',
+     "NEVER_READ = (", [T("test_github_source_line_names_what_the_export_does_not_read", GH)]),
+    ("the owner's listing named as incomplete", GHC, '    "owner": None,',
+     '    "owner": "private repositories of {login} (not listed)",',
+     [T("test_github_source_line_names_what_the_export_does_not_read", GH)]),
+    ("one page of a secret list read as all of it", GHC, '            need(len(value[key]) == value["total_count"], "github",',
+     '            need(True, "github",', [T(GH_REFUSED, GH)]),
+    ("a repository listed twice read twice", GHC,
+     '    need(full.lower() not in names, "github", f"the repository list holds {full!r} twice")', "    pass",
+     [T(GH_REFUSED, GH)]),
+    ("a repository of another owner read", GHC,
+     '    need(full.split("/")[0].lower() == login.lower(), "github", f"{full!r} is not a repository of {login!r}")',
+     "    pass", [T(GH_REFUSED, GH)]),
+    ("a part that was not collected read as empty", GHC,
+     "    need(not missing, \"github\", f\"{full!r}: {', '.join(missing)} not collected\")", "    pass", [T(GH_REFUSED, GH)]),
+    ("a listing not checked against the account type", GHC,
+     '    need((data["listing"] == "organization") == (acct["type"] == "Organization"), "github",',
+     '    need(True, "github",', [T(GH_REFUSED, GH)]),
+    ("read_only of any type read", GHC,
+     '\n                                                 and isinstance(k.get("read_only"), bool) for k in value),',
+     " for k in value),", [T(GH_REFUSED, GH)]),
+    ("a ruleset listed twice read twice", GHC, '            _unique(value, "id", what)\n        elif part == "branch_rules":',
+     '            pass\n        elif part == "branch_rules":', [T(GH_REFUSED, GH)]),
+    ("a finding note printed raw", V2 + "render.py", '        lines.append(f"  note: {safe(n, 400)}")',
+     '        lines.append(f"  note: {n}")', [T(GH_HOSTILE, GH)]),
+    ("an ask row printed raw", V2 + "render.py", "    out += [f\"- {safe(r['id'], 300)}\"", "    out += [f\"- {r['id']}\"",
+     [T(GH_HOSTILE, GH)]),
+    ("a description not kept as data", GHC, '{"repository": {"description": str(repo.get("description") or "")}}',
+     "{}", [T(GH_HOSTILE, GH)]),
+    ("ingest drops --github", CLI, '"ai": a.ai, "github": a.github}', '"ai": a.ai, "github": None}', [T(GH_HOSTILE, GH)]),
+    ("a walk from a pod to its agent rests on GitHub too", V2 + "schema.py",
+     '    ("contains", "pod", "agent"): ("ai.inventory",),', '    ("contains", "pod", "agent"): ("ai.inventory", "github.state"),',
+     [T(GH_NEVER_RAN, GH)]),
+    ("ask counts every pair of an edge", ASKS,
+     '        pairs = [p for p in EDGE_MEANINGS[s["edge"]][1] or () if p[near] in at]',
+     '        pairs = list(EDGE_MEANINGS[s["edge"]][1] or ())', [T(GH_NEVER_RAN, GH), T(RESTS_ON, SOURCES)]),
+    ("detection rests on every pair of an edge", V2 + "detect.py",
+     '        pairs = [p for p in EDGE_MEANINGS[step["edge"]][1] or () if p[far] == step["to"]] or None',
+     "        pairs = None", [T(GH_NEVER_RAN, GH)]),
+    ("pair sources ignored", V2 + "schema.py",
+     "        for name in PAIR_SOURCES.get((etype, src, dst), EDGE_SOURCES.get(etype, ())):",
+     "        for name in EDGE_SOURCES.get(etype, ()):", [T(GH_NEVER_RAN, GH)]),
+    ("a repository rests on no collector", V2 + "schema.py", '    "repository": ("github.state",),', '    "repository": (),',
+     [T(GH_NEVER_RAN, GH), T(TYPE_SRC, SOURCES)]),
+    ("findings leave out the GitHub source", V2 + "render.py",
+     'COLLECTORS = ("aws.state", "k8s.state", "ai.inventory", "github.state")',
+     'COLLECTORS = ("aws.state", "k8s.state", "ai.inventory")', [T(GH_NEVER_RAN, GH)]),
+    ("holds joins only secrets", V2 + "schema.py", '(("repository", "actions_secret"), ("repository", "deploy_key"))',
+     '(("repository", "actions_secret"),)', [T(GH_PAIRS, GH)]),
+    ("contains from an account written by the AI inventory", V2 + "schema.py",
+     '    ("contains", "github_account", "repository"): ("github.state",),',
+     '    ("contains", "github_account", "repository"): ("ai.inventory",),', [T(GH_PAIRS, GH), T(GH_NEVER_RAN, GH)]),
+    ("the history leaves out older snapshots", HIST, '    for s in store.snapshots(statuses=("applied", "older")):',
+     '    for s in store.snapshots(statuses=("applied",)):', [T("test_history_replays_github_snapshots_in_data_time", GH)]),
+    ("the export keeps the deploy key text", EXPORT,
+     '    return {k: v for k, v in key.items() if k != "key"} if isinstance(key, dict) else key', "    return key",
+     [T(GH_ROUNDTRIP, GH)]),
+    ("an HTTP error code read as Failed", EXPORT,
+     '        code = f"HTTP {m.group(1)}" if m else (exc.error_code or "Failed")',
+     '        code = exc.error_code or "Failed"', [T(GH_ROUNDTRIP, GH), T(GH_ONE_REPO, GH)]),
+    ("ingest drops the export's not-evaluated lines", CLI,
+     '                    print(f"repository {term(repo)}: {term(part)} not read ({term(code)}); shown as not evaluated")',
+     "                    pass", [T(GH_ROUNDTRIP, GH)]),
+    ("--github and --github-export both accepted", CLI,
+     '    if a.github_export and a.github:\n        raise SystemExit(', '    if False:\n        raise SystemExit(',
+     [T(GH_ROUNDTRIP, GH)]),
+    ("a GitHub manifest without an owner read", V2 + "collectors/manifest.py",
+     '        if not isinstance(m.get("owner"), str):\n            raise CollectorError(',
+     '        if False:\n            raise CollectorError(', [T(GH_MANIFEST, GH)]),
+    ("a GitHub manifest's not_evaluated map not checked", V2 + "collectors/manifest.py",
+     '        if not (isinstance(ne, dict) and all(isinstance(v, dict)',
+     '        if False and (isinstance(ne, dict) and all(isinstance(v, dict)', [T(GH_MANIFEST, GH)]),
+    ("another user's token lists as the owner's", EXPORT, '        own = isinstance(me, str) and me.lower() == login.lower()',
+     "        own = True", [T(GH_USER, GH)]),
+    ("the owner's own token lists public repositories only", EXPORT,
+     '        own = isinstance(me, str) and me.lower() == login.lower()', "        own = False", [T(GH_USER, GH)]),
+    ("a failed account read goes on", EXPORT, '    acct = _object(f"users/{owner}", "account")',
+     '    acct = {"login": owner, "type": "Organization"}', [T(f"{GH_LIST}[account-404]", GH)]),
+    ("a failed repository list reads as no repositories", EXPORT, '    repos = _pages(base, "repository list")\n',
+     '    repos = _part(lambda: _pages(base, "repository list"))\n    repos = repos if isinstance(repos, list) else []\n',
+     [T(f"{GH_LIST}[list-403]", GH), T(f"{GH_LIST}[list-truncated]", GH)]),
+    ("a repository of another owner exported", EXPORT,
+     '        if not isinstance(full, str) or full.count("/") != 1 or not all(full.split("/")) \\\n'
+     '                or full.split("/")[0].lower() != login.lower():',
+     "        if not isinstance(full, str):", [T(f"{GH_LIST}[list-other-owner]", GH)]),
+    ("a failed call on one repository stops the export", EXPORT,
+     "        return fn()\n    except CommandFailed as exc:", "        return fn()\n    except KeyError as exc:",
+     [T(GH_ONE_REPO, GH)]),
+    ("a short list passes as whole", EXPORT, "    if len(items) != total:\n        raise ExportError(",
+     "    if False:\n        raise ExportError(", [T(GH_ONE_REPO, GH)]),
+    ("an answer that is not an object kept", EXPORT,
+     '    if not isinstance(data, dict):\n        raise ExportError(f"{what}: the answer is not an object")',
+     '    if False:\n        raise ExportError(f"{what}: the answer is not an object")', [T(GH_ONE_REPO, GH)]),
+    ("a repository name not checked before a call", EXPORT,
+     "    if not (LOGIN.fullmatch(owner) and REPO_NAME.fullmatch(name)):", "    if False:", [T(GH_NO_WRITE, GH)]),
+    ("the branch not encoded", EXPORT, '        b = quote(branch, safe="")', "        b = branch", [T(GH_NO_WRITE, GH)]),
+    ("a branch with a control character passed on", EXPORT,
+     ' and branch not in (".", "..") and branch.isprintable()', ' and branch not in (".", "..")', [T(GH_NO_WRITE, GH)]),
+    ("an owner that is not a login passed on", EXPORT, "    if not isinstance(owner, str) or not LOGIN.fullmatch(owner):",
+     "    if not isinstance(owner, str):", [T(GH_NO_WRITE, GH)]),
+    ("a gh call with options allowed", EXPORT,
+     "        return len(argv) == 3 and any(p.fullmatch(argv[2]) for p in GH_READS)",
+     "        return any(p.fullmatch(argv[2]) for p in GH_READS)", [T(GH_RUN, GH)]),
+    ("any gh api path allowed", EXPORT, "        return len(argv) == 3 and any(p.fullmatch(argv[2]) for p in GH_READS)",
+     "        return len(argv) == 3", [T(GH_RUN, GH)]),
+    ("a repository segment may be ..", EXPORT, '_REPO = r"(?!\\.\\.?/)[A-Za-z0-9._-]{1,100}"',
+     '_REPO = r"[A-Za-z0-9._-]{1,100}"', [T(GH_RUN, GH)]),
+    ("a branch segment may be ..", EXPORT, '_BRANCH = r"(?!\\.\\.?(?:\\?|$))[A-Za-z0-9._~%-]{1,800}"',
+     '_BRANCH = r"[A-Za-z0-9._~%-]{1,800}"', [T(GH_RUN, GH)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 
@@ -1342,12 +1566,12 @@ ASK_BEFORE_2C = {"test_ask_runs_a_valid_query_read_only", "test_ask_query_langua
 
 def chain_tests():
     """Tests that must each have a mutant: A to F in the chain file, every export, NetworkPolicy,
-    order, IAM user and source test, and every ask test since slice 2c."""
+    order, IAM user, source and GitHub test, and every ask test since slice 2c."""
     out = []
     for file, keep in ((CHAIN, lambda n: n[:7] in {f"test_{c}_" for c in "abcdef"}), (EXP, lambda n: True),
                        (NET, lambda n: True), (SHADOW, lambda n: True), (ORDER, lambda n: True),
                        (ASK, lambda n: n not in ASK_BEFORE_2C), (USERS, lambda n: True),
-                       (SOURCES, lambda n: True)):
+                       (SOURCES, lambda n: True), (GH, lambda n: True)):
         tree = ast.parse((ROOT / file).read_text())
         out += [(file, n.name) for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name.startswith("test_") and keep(n.name)]
@@ -1373,11 +1597,13 @@ def main():
     named = {node for *_, tests in MUTANTS for node in tests}
     env = dict(os.environ, PYTHONPATH="src", PYTHONDONTWRITEBYTECODE="1")
     collected = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", CHAIN,
-                                NET, SHADOW, ORDER, USERS, SOURCES], cwd=ROOT, env=env, capture_output=True, text=True).stdout.split()
-    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW, ORDER, USERS, SOURCES)) and n not in named]
+                                NET, SHADOW, ORDER, USERS, SOURCES, GH], cwd=ROOT, env=env, capture_output=True,
+                               text=True).stdout.split()
+    loose = [n for n in collected if "[" in n and n.startswith((CHAIN, NET, SHADOW, ORDER, USERS, SOURCES, GH))
+             and n not in named]
     for n in loose:
         print(f"parametrized case with no mutant of its own: {n}")
-    if any(n.startswith((NET, SHADOW, ORDER, USERS, SOURCES)) for n in loose):
+    if any(n.startswith((NET, SHADOW, ORDER, USERS, SOURCES, GH)) for n in loose):
         return 1
     nodes = sorted(named)
     baseline = [n for n in nodes if pytest(n) != 0]
@@ -1406,7 +1632,7 @@ def main():
     caught = sum(r[2] == "caught" for r in results)
     print(f"\n{len(MUTANTS)} mutants, {len(results)} mutant-test pairs, {caught} caught, "
           f"{len(results) - caught} not caught; {len(chain_tests())} A-F, export, NetworkPolicy, -NP,"
-          " order, ask, IAM user and source tests, all covered")
+          " order, ask, IAM user, source and GitHub tests, all covered")
     if tree_state() != start:
         print("THE TREE CHANGED during the run")
         return 1

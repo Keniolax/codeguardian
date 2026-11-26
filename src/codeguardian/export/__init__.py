@@ -310,7 +310,7 @@ def _part(fn):
         code = f"HTTP {m.group(1)}" if m else (exc.error_code or "Failed")
         return {"Error": {"Code": code, "Message": exc.stderr.strip()[:300]}}
     except ExportError as exc:
-        return {"Error": {"Code": "BadOutput", "Message": str(exc)[:300]}}
+        return _error("BadOutput", str(exc)[:300])
 
 
 def _error(code, message):
