@@ -589,7 +589,7 @@ G=fixtures/github
 .venv/bin/python -m codeguardian findings --db gh.db --now 2026-11-14T10:30:00Z
 ```
 
-Measured on 2026-11-26 at commit `cb3ac7f` on the `v2/github` branch, in a cloud container
+Measured on 2026-11-26 at commit `6dd2887` on the `v2/github` branch, in a cloud container
 (x86_64 Linux, Python 3.12.3), on this fixture:
 
 - `findings` lists five open findings. `web-frontend` gets `POST-GH-001`, `POST-GH-003` and
@@ -602,7 +602,9 @@ Measured on 2026-11-26 at commit `cb3ac7f` on the `v2/github` branch, in a cloud
   a placeholder, a query, `..` or a newline were not sent. Of 8 such default branches, 3 were
   not sent and 5 went percent-encoded inside one path segment.
 - 449 tests pass (107 for v1, 342 for v2, of which 44 are for GitHub). The mutation run
-  removes 468 controls one at a time: 680 mutant-test pairs, all caught.
+  removes 469 controls one at a time: 682 mutant-test pairs, all caught. One control, added
+  in the build, keeps the last answer about the default branch's checks only for that branch:
+  after a rename, a check that cannot be read is "not evaluated".
 
 Measured on 2026-11-18 at commit `e357784` on the `v2/netpol-shadow` branch, which also
 holds slices 1 and 2, except the M1 speed, which was measured at `dd2dff1`:
