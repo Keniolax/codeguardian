@@ -524,6 +524,86 @@ The least privilege the export needs:
 - Local only: `kubectl config current-context` reads the kubeconfig, and
   `git check-ignore` reads the repository.
 
+GitHub is the first SaaS source. `python -m codeguardian.export github --owner NAME` runs the
+`gh` CLI you already have and writes one file of GitHub REST answers, plus a manifest. For
+each repository of the account it reads the rulesets, the active rules and the classic branch
+protection of the default branch, the Actions workflow permissions, the deploy keys, the names
+of the Actions secrets, and the workflows. `ingest --github-export DIR` reads the export into
+the model, and `ingest --github FILE --at TIME` reads one file. One model holds one account: a
+snapshot of another account replaces it.
+
+```
+.venv/bin/python -m codeguardian.export github --owner NAME --out exports/github
+.venv/bin/python -m codeguardian ingest --db exports/model.db --github-export exports/github
+```
+
+- Every call is `gh api PATH` and nothing more. `gh api` sends a GET when it has no `-X`, `-f`,
+  `-F` or `--input`, so the export refuses every option. PATH must match one of 12 patterns. A
+  repository name or a default branch that does not fit is not sent, and that repository shows
+  as not evaluated. A branch name is percent-encoded, so `?`, `{branch}` or `:branch` stays
+  inside one path segment, and gh cannot read it as a query or a placeholder. Whether GitHub
+  accepts a branch name with an encoded slash was not tried.
+- A failure of the account call or the repository list stops the export, and it writes
+  nothing. Any other failure is recorded for that part of that repository: a 403 or 404, a
+  timeout, output that is not JSON, or a list shorter than its `total_count`. The repository
+  then names that part as not evaluated, and `POST-GH-005` opens. The model keeps the facts it
+  last read for that part. So a write key that the export could not list again does not read
+  as removed.
+- Only an account's own token lists its private repositories. With another token the export
+  lists the public ones, and the source line says so. For an organisation the source line says
+  that private repositories the token cannot see are not listed. A private repository that
+  such a listing leaves out stays in the model, unconfirmed.
+- Secrets are names only; the API returns no value. The export does not keep the public key
+  text of a deploy key.
+- `contains` now also joins an account to a repository and a repository to a workflow. An
+  answer of `ask` and a detection rest only on the collector that writes the edge between the
+  types they walk. So a walk from a pod to its agent rests on the AI inventory, not on GitHub.
+
+| Rule | Opens when |
+|---|---|
+| `POST-GH-001` | no active ruleset rule and no classic branch protection requires a status check on the default branch |
+| `POST-GH-002` | a deploy key has write access |
+| `POST-GH-003` | GitHub Actions may approve pull requests |
+| `POST-GH-004` | the `GITHUB_TOKEN` of a workflow gets write permissions by default |
+| `POST-GH-005` | a part of the repository could not be read |
+
+A ruleset in "evaluate" or "disabled" mode is not in the rules answer, so it requires no
+check. Classic protection with enforcement "off" requires none either. A setting in a form
+the collector does not read, such as an unknown enforcement level, is "not evaluated", not
+"none". The export does not read who may bypass a ruleset or branch protection, or the
+secrets of the organisation and its environments. The source line names both. A repository
+description is kept as a label, which no rule can read.
+
+The export has not run against GitHub, so its least privilege is not measured. The REST
+reference says that a classic token needs the `repo` scope for the workflow permissions and
+the secret list, and that the secret list needs collaborator access.
+
+`fixtures/github/export.json` is written by hand from the GitHub REST reference (API version
+2022-11-28) for the organisation `example-org`. It holds three repositories, three rulesets,
+two deploy keys, three secret names and four workflows.
+
+```
+G=fixtures/github
+.venv/bin/python -m codeguardian ingest --db gh.db --now 2026-11-14T10:30:00Z --at 2026-11-14T09:55:00Z \
+  --github $G/export.json
+.venv/bin/python -m codeguardian findings --db gh.db --now 2026-11-14T10:30:00Z
+```
+
+Measured on 2026-11-26 at commit `cb3ac7f` on the `v2/github` branch, in a cloud container
+(x86_64 Linux, Python 3.12.3), on this fixture:
+
+- `findings` lists five open findings. `web-frontend` gets `POST-GH-001`, `POST-GH-003` and
+  `POST-GH-004`, and its write key gets `POST-GH-002`. `docs-site` gets `POST-GH-005`,
+  because its deploy keys answered 403. `payments-api` gets none: its ruleset requires two
+  checks. The classic protection of `docs-site` requires one. The model holds 16 entities and
+  17 edges.
+- Against a fake `gh` that replays these answers, the export made 23 calls, each a GET on the
+  list, and wrote the same file. In a second test, 7 repository names with a space, an option,
+  a placeholder, a query, `..` or a newline were not sent. Of 8 such default branches, 3 were
+  not sent and 5 went percent-encoded inside one path segment.
+- 449 tests pass (107 for v1, 342 for v2, of which 44 are for GitHub). The mutation run
+  removes 468 controls one at a time: 680 mutant-test pairs, all caught.
+
 Measured on 2026-11-18 at commit `e357784` on the `v2/netpol-shadow` branch, which also
 holds slices 1 and 2, except the M1 speed, which was measured at `dd2dff1`:
 
