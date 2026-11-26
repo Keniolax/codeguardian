@@ -8,7 +8,7 @@ the next snapshot, never treated as a pass.
 """
 
 from . import rules as R
-from .schema import EDGE_SOURCES, finding_id
+from .schema import EDGE_MEANINGS, edge_sources, finding_id
 
 UNEVALUABLE = "unevaluable"
 CONTEXT_STEPS = (  # identity neighbourhood that lets findings meet in one incident
@@ -37,9 +37,20 @@ def context(store, nodes):
     return seen
 
 
+def step_sources(step):
+    """The collectors that write the edges one walk step can take. A step with a "to" type
+    rests only on those that write its edge to that type: a walk from a pod to its agent
+    does not wait for the GitHub export, which writes other contains edges."""
+    pairs = None
+    if "to" in step:
+        far = 1 if step["dir"] == "out" else 0
+        pairs = [p for p in EDGE_MEANINGS[step["edge"]][1] or () if p[far] == step["to"]] or None
+    return edge_sources(step["edge"], pairs)
+
+
 def sources_never_run(store, rule):
     """The collectors a rule's walks depend on that have never completed a snapshot."""
-    needed = {name for w in rule.get("when", []) for step in w["walk"] for name in EDGE_SOURCES.get(step["edge"], ())}
+    needed = {name for w in rule.get("when", []) for step in w["walk"] for name in step_sources(step)}
     return sorted(n for n in needed if (store.source(n) or {}).get("last_success") is None)
 
 

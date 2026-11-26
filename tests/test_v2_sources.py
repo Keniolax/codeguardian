@@ -22,6 +22,7 @@ from codeguardian.v2.rules import load_rules
 from codeguardian.v2.schema import EDGE_SOURCES, ENTITY_TYPES, TYPE_SOURCES, FixedClock
 from codeguardian.v2.store import Store
 from test_v2_netpol import LAYOUT
+from v2_helpers import GITHUB
 from test_v2_users import group, user, with_iam
 from v2_helpers import AGENT, FX, NOW, POD, SA, SNAPSHOT_AT, build, chain, dump
 
@@ -87,8 +88,10 @@ def test_type_sources_name_the_collector_of_every_entity_and_edge_in_the_models(
         pipe.process(record)
     course = Store()
     Pipeline(course, load_rules(), FixedClock(NOW), cluster="course").snapshot(k8s=LAYOUT, at=SNAPSHOT_AT)
+    github = Store()
+    Pipeline(github, load_rules(), FixedClock(NOW)).snapshot(github=GITHUB, at=SNAPSHOT_AT)
     seen = set()
-    for store in (chain_store, course):
+    for store in (chain_store, course, github):
         for e in store.entities():
             seen.add(e["type"])
             assert e["source"] in TYPE_SOURCES[e["type"]] or (e["source"] == "builtin"

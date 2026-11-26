@@ -16,7 +16,7 @@ from . import respond
 from .schema import REFRESH_SECONDS, seconds_between
 from .correlate import all_entities, members, timeline
 
-COLLECTORS = ("aws.state", "k8s.state", "ai.inventory")
+COLLECTORS = ("aws.state", "k8s.state", "ai.inventory", "github.state")
 CHANGE_COUNTERS = {
     "model_change_role_not_in_model": "IAM change records for a role the model does not hold (not applied)",
     "model_change_not_evaluated": "IAM change records that could not be ordered (role marked not evaluated)",

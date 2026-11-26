@@ -16,8 +16,9 @@ FORMAT = "codeguardian.export/v1"
 FILES = {
     "aws": {"iam": "iam.json", "buckets": "s3-buckets.json", "tags": "s3-tags.json"},
     "k8s": {"k8s": "k8s.json"},
+    "github": {"github": "github.json"},
 }
-MANIFEST = {"aws": "aws-manifest.json", "k8s": "k8s-manifest.json"}
+MANIFEST = {"aws": "aws-manifest.json", "k8s": "k8s-manifest.json", "github": "github-manifest.json"}
 
 
 def sha256(data):
@@ -52,4 +53,11 @@ def read(directory, kind):
         paths[role] = d / name
     if kind == "k8s" and not isinstance(m.get("cluster"), str):
         raise CollectorError(f"{what}: manifest has no cluster name")
+    if kind == "github":
+        if not isinstance(m.get("owner"), str):
+            raise CollectorError(f"{what}: manifest has no owner")
+        ne = m.get("not_evaluated", {})
+        if not (isinstance(ne, dict) and all(isinstance(v, dict) and all(isinstance(c, str) for c in v.values())
+                                             for v in ne.values())):
+            raise CollectorError(f"{what}: manifest not_evaluated is not a map of repository to part to code")
     return paths, m

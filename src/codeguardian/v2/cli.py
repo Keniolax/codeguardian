@@ -38,6 +38,10 @@ def add_subcommands(sub):
                                         " its manifest gives the time")
     p.add_argument("--k8s-export", help="directory written by `python -m codeguardian.export k8s`;"
                                         " its manifest gives the time and the cluster name")
+    p.add_argument("--github", help="github.json written by `python -m codeguardian.export github`; --at gives"
+                                    " the time")
+    p.add_argument("--github-export", help="directory written by `python -m codeguardian.export github`;"
+                                           " its manifest gives the time")
     p.epilog = ("exit status: 0 every snapshot applied or already in the model, 1 the options were refused"
                 " and the model is unchanged, 2 a collector failed, a snapshot sent again is of a source"
                 " that is not current (a note says why), or the command line was not understood, 3 a"
@@ -214,8 +218,11 @@ def _ingest(a, store, pipe, clock):
         raise SystemExit("use --aws-export or the --aws-* files, not both")
     if a.k8s_export and a.k8s:
         raise SystemExit("use --k8s-export or --k8s, not both")
+    if a.github_export and a.github:
+        raise SystemExit("use --github-export or --github, not both")
     jobs, errors = [], []
-    for kind, directory, source in (("k8s", a.k8s_export, "k8s.state"), ("aws", a.aws_export, "aws.state")):
+    for kind, directory, source in (("k8s", a.k8s_export, "k8s.state"), ("aws", a.aws_export, "aws.state"),
+                                    ("github", a.github_export, "github.state")):
         if not directory:
             continue
         try:
@@ -231,12 +238,18 @@ def _ingest(a, store, pipe, clock):
             # The pipeline keeps the name as the default only if it applies the snapshot.
             pipe.cluster = m["cluster"]
             jobs.append({"k8s": paths["k8s"], "at": m["exported_at"]})
+        elif kind == "github":
+            jobs.append({"github": paths["github"], "at": m["exported_at"]})
+            print(f"GitHub export of {term(m['owner'])} taken at {m['exported_at']}")
+            for repo, parts in sorted((m.get("not_evaluated") or {}).items()):
+                for part, code in sorted(parts.items()):
+                    print(f"repository {term(repo)}: {term(part)} not read ({term(code)}); shown as not evaluated")
         else:
             jobs.append({"aws": (paths["iam"], paths["buckets"], paths["tags"]), "at": m["exported_at"]})
             print(f"AWS export of account {term(m.get('account_id'))} taken at {m['exported_at']}")
             for bucket, code in sorted((m.get("not_evaluated") or {}).items()):
                 print(f"bucket {term(bucket)}: tags not read ({term(code)}); shown as not evaluated")
-    typed = {"aws": aws if all(aws) else None, "k8s": a.k8s, "ai": a.ai}
+    typed = {"aws": aws if all(aws) else None, "k8s": a.k8s, "ai": a.ai, "github": a.github}
     if any(typed.values()):
         jobs.append({**typed, "at": a.at and _ts(a.at)})
     opened = resolved = 0

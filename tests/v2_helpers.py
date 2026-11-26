@@ -11,6 +11,7 @@ from codeguardian.v2.schema import FixedClock
 from codeguardian.v2.store import Store
 
 FX = Path(__file__).resolve().parents[1] / "fixtures" / "chain"
+GITHUB = FX.parent / "github" / "export.json"
 SNAPSHOT_AT = "2026-11-14T09:55:00Z"
 NOW = "2026-11-14T10:30:00Z"
 ACCT = "111122223333"

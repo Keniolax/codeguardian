@@ -6,7 +6,7 @@ import pytest
 
 from codeguardian.v2 import render
 from codeguardian.v2.ask import QueryError, ask, check_query, language
-from codeguardian.v2.schema import EDGE_MEANINGS, EDGE_TYPES
+from codeguardian.v2.schema import EDGE_MEANINGS, EDGE_TYPES, ENTITY_TYPES
 from v2_helpers import FINANCE, FX, KB, POD, ROLE, SA, build, dump, fixture, k8s_item
 
 
@@ -86,7 +86,7 @@ def test_ask_says_when_a_query_cannot_match_so_an_empty_answer_does_not_read_as_
             " cannot find anything. An empty answer here does not mean none.") in text
     # An edge no collector writes yet says so.
     unwritten = ask(store, "x", QueryModel({"find": "iam_role", "where": [], "related": [
-        {"edge": "holds", "dir": "out"}], "limit": 10}))
+        {"edge": "deploys_to", "dir": "out"}], "limit": 10}))
     assert "edge from iam\\_role to any type (no collector writes this edge yet)" in render.answer(unwritten)
     # Control: the right query answers with rows and no warning.
     right = ask(store, QUESTION, QueryModel(RIGHT["query"]))
@@ -125,7 +125,7 @@ def test_ask_language_gives_each_edge_its_meaning_and_the_types_the_collectors_j
     assert list(edges) == list(EDGE_TYPES)
     assert edges["reads"] == {"means": EDGE_MEANINGS["reads"][0], "from": "tool", "to": "s3_bucket"}
     assert edges["has_permission"]["from"] == "iam_role or iam_user" and "IAM policies" in edges["has_permission"]["means"]
-    assert edges["holds"] == {"means": "no collector writes this edge yet"}
+    assert edges["deploys_to"] == {"means": "no collector writes this edge yet"}
     # Every edge in the chain model joins the types its meaning names, and every edge type
     # with ends in the table occurs in the model, so the table cannot drift from the collectors.
     store, _ = build(tmp_path)
@@ -136,8 +136,11 @@ def test_ask_language_gives_each_edge_its_meaning_and_the_types_the_collectors_j
             seen.setdefault(e["type"], set()).add((src["type"], dst["type"]))
     declared = {t: set(pairs) for t, (_, pairs) in EDGE_MEANINGS.items() if pairs}
     assert {t: v <= declared.get(t, set()) for t, v in seen.items()} == {t: True for t in seen}
-    # The chain holds no IAM user, so its edges are checked in tests/test_v2_users.py.
-    assert seen == {t: pairs - {("iam_user", "s3_bucket")} for t, pairs in declared.items()}
+    # The chain holds no IAM user and no GitHub state, so those edges are checked in
+    # tests/test_v2_users.py and tests/test_v2_github.py.
+    saas = {t for t, v in ENTITY_TYPES.items() if v[1] == "saas"}
+    elsewhere = {("iam_user", "s3_bucket")} | {p for pairs in declared.values() for p in pairs if set(p) & saas}
+    assert seen == {t: pairs - elsewhere for t, pairs in declared.items() if pairs - elsewhere}
 
 
 def test_ask_note_from_the_model_cannot_forge_a_row_or_hide_the_warning(tmp_path):

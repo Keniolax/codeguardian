@@ -28,12 +28,13 @@ from . import rules as R
 from .collectors import CollectorError, Delta
 from .collectors import ai as ai_collector
 from .collectors import aws as aws_collector
+from .collectors import github as github_collector
 from .collectors import k8s as k8s_collector
 from .collectors.events import ParseError, parse
 from .policy import trusts_service_account
 from .schema import entity_id, finding_id, ts
 
-SNAPSHOT_ORDER = (aws_collector.SOURCE, k8s_collector.SOURCE, ai_collector.SOURCE)
+SNAPSHOT_ORDER = (aws_collector.SOURCE, k8s_collector.SOURCE, ai_collector.SOURCE, github_collector.SOURCE)
 
 
 def snapshot_content(source, data, cluster, outside):
@@ -68,8 +69,8 @@ class Pipeline:
 
     # --- snapshots -----------------------------------------------------------------------
 
-    def snapshot(self, aws=None, k8s=None, ai=None, at=None):
-        """Run the given collectors. aws = (iam, buckets, tags) paths; k8s and ai are paths.
+    def snapshot(self, aws=None, k8s=None, ai=None, at=None, github=None):
+        """Run the given collectors. aws = (iam, buckets, tags) paths; k8s, ai and github are paths.
 
         A collector that fails is recorded as failed, so its facts read as stale, and the
         others still run. The errors are raised together at the end, with the changes on
@@ -85,6 +86,8 @@ class Pipeline:
             loaders.append((k8s_collector.SOURCE, lambda: k8s_collector.load(k8s)))
         if ai is not None:
             loaders.append((ai_collector.SOURCE, lambda: ai_collector.load(ai)))
+        if github is not None:
+            loaders.append((github_collector.SOURCE, lambda: github_collector.load(github)))
         marked = False
         for name, load in loaders:
             try:
@@ -171,6 +174,8 @@ class Pipeline:
                 # The cluster name in the model's pod IDs, the default of the commands that name
                 # a pod. Only an applied snapshot sets it: a refused one changes nothing.
                 self.store.set_setting("cluster", content["cluster"])
+            elif name == github_collector.SOURCE:
+                github_collector.apply(self.store, content["data"], at)
             else:
                 ai_collector.apply(self.store, content["data"], at)
             self.store.record_source(name, True, at)

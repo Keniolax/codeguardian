@@ -1,8 +1,10 @@
-"""Read-only snapshot export: runs the `aws` and `kubectl` CLIs the person already has and
-writes exactly the files the stage 1 collectors read, plus a manifest.
+"""Read-only snapshot export: runs the `aws`, `kubectl` and `gh` CLIs the person already has
+and writes exactly the files the collectors read, plus a manifest.
 
 Every command goes through run(), which refuses anything not on the READ_ONLY list and
-passes an argument list, never a shell string. Nothing here writes to AWS or Kubernetes.
+passes an argument list, never a shell string. A `gh` call must be `gh api PATH` and
+nothing more, with PATH on the GH_READS list: no option, so no -X, -f, -F, --input or
+--method, and `gh api` sends a GET. Nothing here writes to AWS, Kubernetes or GitHub.
 
 Missing knowledge must not read as safe:
 - A bucket with no tags (NoSuchTagSet) is recorded as {"TagSet": []}.
@@ -12,6 +14,10 @@ Missing knowledge must not read as safe:
 - A failure of the IAM, bucket-list or kubectl call stops the export with an error. The
   manifest is written last and records each file's SHA-256, so ingest refuses a partial
   or mixed set.
+- GitHub: a failure of the account or repository list stops the export. Any failure of
+  one call about one repository (a 403 or 404, a timeout, output that is not JSON, a list
+  shorter than its total_count) is recorded as {"Error": {...}} for that part, and the
+  collector shows it as not evaluated.
 
 Real exports hold real account IDs and pod specs. Output is refused inside a git work
 tree unless git ignores the path, and every file is created with mode 0600.
@@ -23,6 +29,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 from ..v2.collectors.manifest import FILES, FORMAT, MANIFEST, sha256
 
@@ -62,7 +69,38 @@ class CommandFailed(ExportError):
         super().__init__(f"{' '.join(argv[:3])} failed ({error_code or f'exit {code}'}): {self.stderr.strip()[:300]}")
 
 
+# GitHub: the REST paths `gh api` may GET, whole. A login, a repository name and an encoded
+# branch name hold no "{", ":", "?", "&" or "/" of their own, so gh cannot fill in a
+# placeholder and a name cannot add a query or a path segment.
+_LOGIN = r"[A-Za-z0-9][A-Za-z0-9-]{0,38}"
+_REPO = r"(?!\.\.?/)[A-Za-z0-9._-]{1,100}"
+_BRANCH = r"(?!\.\.?(?:\?|$))[A-Za-z0-9._~%-]{1,800}"
+_PAGE = r"per_page=100&page=[1-9][0-9]{0,2}"
+GH_READS = tuple(re.compile(p) for p in (
+    rf"users/{_LOGIN}",
+    r"user",
+    rf"orgs/{_LOGIN}/repos\?type=all&{_PAGE}",
+    rf"users/{_LOGIN}/repos\?type=owner&{_PAGE}",
+    rf"user/repos\?affiliation=owner&{_PAGE}",
+    rf"repos/{_LOGIN}/{_REPO}/rulesets\?includes_parents=true&{_PAGE}",
+    rf"repos/{_LOGIN}/{_REPO}/rules/branches/{_BRANCH}\?{_PAGE}",
+    rf"repos/{_LOGIN}/{_REPO}/branches/{_BRANCH}",
+    rf"repos/{_LOGIN}/{_REPO}/actions/permissions/workflow",
+    rf"repos/{_LOGIN}/{_REPO}/keys\?{_PAGE}",
+    rf"repos/{_LOGIN}/{_REPO}/actions/secrets\?{_PAGE}",
+    rf"repos/{_LOGIN}/{_REPO}/actions/workflows\?{_PAGE}",
+))
+LOGIN = re.compile(_LOGIN)
+REPO_NAME = re.compile(r"(?!\.\.?$)[A-Za-z0-9._-]{1,100}")
+HTTP_ERROR = re.compile(r"\(?HTTP ([0-9]{3})\)?")
+GH_TIMEOUT = 60
+PER_PAGE = 100
+MAX_PAGES = 100
+
+
 def allowed(argv):
+    if tuple(argv[:2]) == ("gh", "api"):
+        return len(argv) == 3 and any(p.fullmatch(argv[2]) for p in GH_READS)
     return any(tuple(argv[:len(p)]) == p for p in READ_ONLY)
 
 
@@ -217,4 +255,131 @@ def export_k8s(out, clock, cluster_name=None):
     manifest = {"format": FORMAT, "kind": "k8s", "exported_at": clock.now(), "context": context,
                 "cluster": cluster_name or context}
     _write(out, {FILES["k8s"]["k8s"]: _dump(data)}, MANIFEST["k8s"], manifest)
+    return manifest
+
+
+# --- GitHub --------------------------------------------------------------------------------
+
+GH_PARTS = ("rulesets", "branch_rules", "branch", "workflow_permissions", "deploy_keys", "secrets", "workflows")
+GH_FORMAT = "codeguardian.github-export/v1"
+
+
+def _gh(path, what):
+    return run_json(["gh", "api", path], what, GH_TIMEOUT)
+
+
+def _pages(base, what, key=None):
+    """Every page of a list. With key, each page is an object with total_count and a list
+    under key, and the whole list must hold total_count items."""
+    items, total = [], None
+    for page in range(1, MAX_PAGES + 1):
+        data = _gh(f"{base}per_page={PER_PAGE}&page={page}", what)
+        if key is None:
+            if not isinstance(data, list):
+                raise ExportError(f"{what}: the answer is not a list")
+            batch = data
+        else:
+            if not (isinstance(data, dict) and isinstance(data.get(key), list) and isinstance(data.get("total_count"), int)):
+                raise ExportError(f"{what}: the answer has no total_count and {key} list")
+            batch, total = data[key], data["total_count"]
+        items += batch
+        if len(batch) < PER_PAGE or (total is not None and len(items) >= total):
+            break
+    else:
+        raise ExportError(f"{what}: more than {MAX_PAGES} pages")
+    if key is None:
+        return items
+    if len(items) != total:
+        raise ExportError(f"{what}: listed {len(items)} of {total}")
+    return {"total_count": total, key: items}
+
+
+def _object(path, what):
+    data = _gh(path, what)
+    if not isinstance(data, dict):
+        raise ExportError(f"{what}: the answer is not an object")
+    return data
+
+
+def _part(fn):
+    """One call about one repository. Any failure is that part's Error, never a gap."""
+    try:
+        return fn()
+    except CommandFailed as exc:
+        m = HTTP_ERROR.search(exc.stderr)
+        code = f"HTTP {m.group(1)}" if m else (exc.error_code or "Failed")
+        return {"Error": {"Code": code, "Message": exc.stderr.strip()[:300]}}
+    except ExportError as exc:
+        return {"Error": {"Code": "BadOutput", "Message": str(exc)[:300]}}
+
+
+def _error(code, message):
+    return {"Error": {"Code": code, "Message": message}}
+
+
+def _branch_ok(branch):
+    return isinstance(branch, str) and 0 < len(branch) <= 255 and branch not in (".", "..") and branch.isprintable()
+
+
+def _drop_key(key):
+    # A deploy key's public key is not needed, so the export does not keep it.
+    return {k: v for k, v in key.items() if k != "key"} if isinstance(key, dict) else key
+
+
+def _repository(repo):
+    owner, name = repo["full_name"].split("/")
+    entry = {"repository": repo}
+    if not (LOGIN.fullmatch(owner) and REPO_NAME.fullmatch(name)):
+        return {**entry, **{p: _error("InvalidName", "the name was not passed to the CLI") for p in GH_PARTS}}
+    base, what = f"repos/{owner}/{name}/", repo["full_name"]
+    entry["rulesets"] = _part(lambda: _pages(base + "rulesets?includes_parents=true&", f"{what} rulesets"))
+    branch = repo.get("default_branch")
+    if _branch_ok(branch):
+        b = quote(branch, safe="")
+        entry["branch_rules"] = _part(lambda: _pages(base + f"rules/branches/{b}?", f"{what} branch rules"))
+        entry["branch"] = _part(lambda: _object(base + f"branches/{b}", f"{what} branch"))
+    else:
+        code = "NoDefaultBranch" if branch is None else "InvalidBranchName"
+        entry["branch_rules"] = entry["branch"] = _error(code, "the default branch was not passed to the CLI")
+    entry["workflow_permissions"] = _part(lambda: _object(base + "actions/permissions/workflow",
+                                                          f"{what} workflow permissions"))
+    entry["deploy_keys"] = _part(lambda: [_drop_key(k) for k in _pages(base + "keys?", f"{what} deploy keys")])
+    entry["secrets"] = _part(lambda: _pages(base + "actions/secrets?", f"{what} secrets", "secrets"))
+    entry["workflows"] = _part(lambda: _pages(base + "actions/workflows?", f"{what} workflows", "workflows"))
+    return entry
+
+
+def export_github(out, clock, owner):
+    if not isinstance(owner, str) or not LOGIN.fullmatch(owner):
+        raise ExportError("the owner is not a GitHub login (letters, digits and hyphens, up to 39)")
+    out = prepare_output(out)
+    acct = _object(f"users/{owner}", "account")
+    login = acct.get("login")
+    if acct.get("type") not in ("User", "Organization") or not isinstance(login, str) or login.lower() != owner.lower():
+        raise ExportError("account: the answer is not the User or Organization asked for")
+    if acct["type"] == "Organization":
+        listing, base = "organization", f"orgs/{login}/repos?type=all&"
+    else:
+        try:
+            me = _object("user", "authenticated user").get("login")
+        except ExportError:
+            me = None
+        own = isinstance(me, str) and me.lower() == login.lower()
+        listing, base = ("owner", "user/repos?affiliation=owner&") if own else ("public", f"users/{login}/repos?type=owner&")
+    repos = _pages(base, "repository list")
+    for r in repos:
+        full = r.get("full_name") if isinstance(r, dict) else None
+        if not isinstance(full, str) or full.count("/") != 1 or not all(full.split("/")) \
+                or full.split("/")[0].lower() != login.lower():
+            raise ExportError(f"repository list: an entry is not a repository of {login}")
+    data = {"format": GH_FORMAT, "account": {k: acct.get(k) for k in ("login", "type", "public_repos")},
+            "listing": listing, "repositories": [_repository(r) for r in repos]}
+    not_evaluated = {}
+    for e in data["repositories"]:
+        bad = {p: e[p]["Error"]["Code"] for p in GH_PARTS if isinstance(e[p], dict) and set(e[p]) == {"Error"}}
+        if bad:
+            not_evaluated[e["repository"]["full_name"]] = bad
+    manifest = {"format": FORMAT, "kind": "github", "exported_at": clock.now(), "owner": login, "listing": listing,
+                "not_evaluated": not_evaluated}
+    _write(out, {FILES["github"]["github"]: _dump(data)}, MANIFEST["github"], manifest)
     return manifest

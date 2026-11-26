@@ -23,7 +23,8 @@ the command can say when one of them is not current.
 import json
 
 from . import rules as R
-from .schema import ATTR_SOURCES, EDGE_MEANINGS, EDGE_SOURCES, EDGE_TYPES, ENTITY_TYPES, TYPE_SOURCES
+from .schema import (ATTR_SOURCES, EDGE_MEANINGS, EDGE_SOURCES, EDGE_TYPES, ENTITY_TYPES, TYPE_SOURCES,
+                     edge_sources)
 
 MAX_LIMIT = 100
 KEYS = {"find", "where", "related", "limit"}
@@ -155,16 +156,21 @@ def sources(q):
     """The collectors an answer to a checked query rests on: those that write the "find"
     type and each attr its "where" filters on, each walked edge, and the types at the far
     end of each step (its "to" type, or without one every type the edge joins at that end),
-    in the order `findings` lists them."""
+    in the order `findings` lists them. A step counts only the pairs of types its edge
+    joins from where the walk is, so a walk from a pod to its agent rests on the AI
+    inventory, not on the GitHub export that writes other contains edges."""
     from .render import COLLECTORS
 
     names = set(TYPE_SOURCES[q["find"]])
     for c in q["where"]:
         names.update(ATTR_SOURCES.get((q["find"], c["attr"]), ()))
+    at = {q["find"]}
     for s in q["related"]:
-        names.update(EDGE_SOURCES.get(s["edge"], ()))
-        pairs = EDGE_MEANINGS[s["edge"]][1] or ()
-        far = [s["to"]] if s.get("to") else [p[1] if s["dir"] == "out" else p[0] for p in pairs]
+        near = 0 if s["dir"] == "out" else 1
+        pairs = [p for p in EDGE_MEANINGS[s["edge"]][1] or () if p[near] in at]
+        names.update(edge_sources(s["edge"], pairs))
+        far = [s["to"]] if s.get("to") else [p[1 - near] for p in pairs]
+        at = set(far)
         for t in far:
             names.update(TYPE_SOURCES[t])
     order = {n: i for i, n in enumerate(COLLECTORS)}

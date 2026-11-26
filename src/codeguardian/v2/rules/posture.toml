@@ -79,3 +79,56 @@ title = "A bucket's tags could not be read, so whether it holds sensitive data i
 frameworks = []
 entity = "s3_bucket"
 where = [{ attr = "tags_error", op = "nonempty" }]
+
+# GitHub (slice 3). A setting the export could not read is None on the repository, so
+# these rules do not fire on it; POST-GH-005 names it instead.
+
+[[rule]]
+id = "POST-GH-001"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "No ruleset or branch protection requires a status check on a repository's default branch"
+frameworks = []
+entity = "repository"
+where = [{ attr = "default_branch_checks", op = "eq", value = "none" }]
+
+[[rule]]
+id = "POST-GH-002"
+version = 1
+kind = "posture"
+severity = "high"
+title = "A deploy key can write to its repository"
+frameworks = []
+entity = "deploy_key"
+where = [{ attr = "read_only", op = "eq", value = false }]
+
+[[rule]]
+id = "POST-GH-003"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "GitHub Actions may approve pull requests in a repository"
+frameworks = []
+entity = "repository"
+where = [{ attr = "actions_can_approve_pull_requests", op = "eq", value = true }]
+
+[[rule]]
+id = "POST-GH-004"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "Workflows in a repository get a GITHUB_TOKEN that can write by default"
+frameworks = []
+entity = "repository"
+where = [{ attr = "default_workflow_permissions", op = "eq", value = "write" }]
+
+[[rule]]
+id = "POST-GH-005"
+version = 1
+kind = "posture"
+severity = "medium"
+title = "Parts of a repository's GitHub settings could not be read, so its findings may be incomplete"
+frameworks = []
+entity = "repository"
+where = [{ attr = "not_evaluated", op = "nonempty" }]

@@ -1,0 +1,439 @@
+{
+  "format": "codeguardian.github-export/v1",
+  "account": {
+    "login": "example-org",
+    "type": "Organization",
+    "public_repos": 2
+  },
+  "listing": "organization",
+  "repositories": [
+    {
+      "repository": {
+        "id": 7001,
+        "node_id": "R_example7001",
+        "name": "payments-api",
+        "full_name": "example-org/payments-api",
+        "private": true,
+        "owner": {
+          "login": "example-org",
+          "id": 9001,
+          "type": "Organization"
+        },
+        "html_url": "https://github.com/example-org/payments-api",
+        "description": "Payment service API",
+        "fork": false,
+        "url": "https://api.github.com/repos/example-org/payments-api",
+        "archived": false,
+        "disabled": false,
+        "visibility": "private",
+        "default_branch": "main",
+        "created_at": "2026-09-01T12:00:00Z",
+        "updated_at": "2026-11-10T08:00:00Z",
+        "pushed_at": "2026-11-13T17:30:00Z"
+      },
+      "rulesets": [
+        {
+          "id": 101,
+          "name": "main needs ci",
+          "target": "branch",
+          "source_type": "Repository",
+          "source": "example-org/payments-api",
+          "enforcement": "active",
+          "node_id": "RRS_example101",
+          "_links": {
+            "self": {
+              "href": "https://api.github.com/repos/example-org/payments-api/rulesets/101"
+            }
+          },
+          "created_at": "2026-09-02T09:00:00Z",
+          "updated_at": "2026-10-20T09:00:00Z"
+        },
+        {
+          "id": 7,
+          "name": "org baseline",
+          "target": "branch",
+          "source_type": "Organization",
+          "source": "example-org",
+          "enforcement": "active",
+          "node_id": "RRS_example7",
+          "_links": {
+            "self": {
+              "href": "https://api.github.com/repos/example-org/rulesets/7"
+            }
+          },
+          "created_at": "2026-09-02T09:00:00Z",
+          "updated_at": "2026-10-20T09:00:00Z"
+        }
+      ],
+      "branch_rules": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Organization",
+          "ruleset_source": "example-org",
+          "ruleset_id": 7
+        },
+        {
+          "type": "pull_request",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "example-org/payments-api",
+          "ruleset_id": 101,
+          "parameters": {
+            "required_approving_review_count": 1,
+            "dismiss_stale_reviews_on_push": true,
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": false
+          }
+        },
+        {
+          "type": "required_status_checks",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "example-org/payments-api",
+          "ruleset_id": 101,
+          "parameters": {
+            "strict_required_status_checks_policy": true,
+            "required_status_checks": [
+              {
+                "context": "ci/test"
+              },
+              {
+                "context": "ci/lint"
+              }
+            ]
+          }
+        }
+      ],
+      "branch": {
+        "name": "main",
+        "commit": {
+          "sha": "0000000000000000000000000000000000000000"
+        },
+        "_links": {
+          "self": "https://api.github.com/repos/example-org/x/branches/main"
+        },
+        "protected": false,
+        "protection": {
+          "enabled": false,
+          "required_status_checks": {
+            "enforcement_level": "off",
+            "contexts": [],
+            "checks": []
+          }
+        },
+        "protection_url": "https://api.github.com/repos/example-org/x/branches/main/protection"
+      },
+      "workflow_permissions": {
+        "default_workflow_permissions": "read",
+        "can_approve_pull_request_reviews": false
+      },
+      "deploy_keys": [
+        {
+          "id": 5001,
+          "url": "https://api.github.com/repos/example-org/payments-api/keys/5001",
+          "title": "release reader",
+          "verified": true,
+          "created_at": "2026-09-05T10:00:00Z",
+          "read_only": true,
+          "added_by": "example-admin",
+          "last_used": "2026-11-12T22:00:00Z",
+          "enabled": true
+        }
+      ],
+      "secrets": {
+        "total_count": 2,
+        "secrets": [
+          {
+            "name": "AWS_DEPLOY_ROLE_ARN",
+            "created_at": "2026-09-05T10:00:00Z",
+            "updated_at": "2026-10-01T10:00:00Z"
+          },
+          {
+            "name": "SENTRY_DSN",
+            "created_at": "2026-09-05T10:00:00Z",
+            "updated_at": "2026-10-01T10:00:00Z"
+          }
+        ]
+      },
+      "workflows": {
+        "total_count": 2,
+        "workflows": [
+          {
+            "id": 8001,
+            "node_id": "W_example8001",
+            "name": "ci",
+            "path": ".github/workflows/ci.yml",
+            "state": "active",
+            "created_at": "2026-09-03T10:00:00Z",
+            "updated_at": "2026-10-03T10:00:00Z",
+            "url": "https://api.github.com/repos/example-org/payments-api/actions/workflows/8001",
+            "html_url": "https://github.com/example-org/payments-api/blob/main/.github/workflows/ci.yml",
+            "badge_url": "https://github.com/example-org/payments-api/workflows/ci/badge.svg"
+          },
+          {
+            "id": 8002,
+            "node_id": "W_example8002",
+            "name": "deploy",
+            "path": ".github/workflows/deploy.yml",
+            "state": "active",
+            "created_at": "2026-09-03T10:00:00Z",
+            "updated_at": "2026-10-03T10:00:00Z",
+            "url": "https://api.github.com/repos/example-org/payments-api/actions/workflows/8002",
+            "html_url": "https://github.com/example-org/payments-api/blob/main/.github/workflows/deploy.yml",
+            "badge_url": "https://github.com/example-org/payments-api/workflows/deploy/badge.svg"
+          }
+        ]
+      }
+    },
+    {
+      "repository": {
+        "id": 7002,
+        "node_id": "R_example7002",
+        "name": "web-frontend",
+        "full_name": "example-org/web-frontend",
+        "private": false,
+        "owner": {
+          "login": "example-org",
+          "id": 9001,
+          "type": "Organization"
+        },
+        "html_url": "https://github.com/example-org/web-frontend",
+        "description": "Public web front end",
+        "fork": false,
+        "url": "https://api.github.com/repos/example-org/web-frontend",
+        "archived": false,
+        "disabled": false,
+        "visibility": "public",
+        "default_branch": "main",
+        "created_at": "2026-09-01T12:00:00Z",
+        "updated_at": "2026-11-10T08:00:00Z",
+        "pushed_at": "2026-11-13T17:30:00Z"
+      },
+      "rulesets": [
+        {
+          "id": 102,
+          "name": "main needs review",
+          "target": "branch",
+          "source_type": "Repository",
+          "source": "example-org/web-frontend",
+          "enforcement": "active",
+          "node_id": "RRS_example102",
+          "_links": {
+            "self": {
+              "href": "https://api.github.com/repos/example-org/web-frontend/rulesets/102"
+            }
+          },
+          "created_at": "2026-09-02T09:00:00Z",
+          "updated_at": "2026-10-20T09:00:00Z"
+        },
+        {
+          "id": 7,
+          "name": "org baseline",
+          "target": "branch",
+          "source_type": "Organization",
+          "source": "example-org",
+          "enforcement": "active",
+          "node_id": "RRS_example7",
+          "_links": {
+            "self": {
+              "href": "https://api.github.com/repos/example-org/rulesets/7"
+            }
+          },
+          "created_at": "2026-09-02T09:00:00Z",
+          "updated_at": "2026-10-20T09:00:00Z"
+        }
+      ],
+      "branch_rules": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Organization",
+          "ruleset_source": "example-org",
+          "ruleset_id": 7
+        },
+        {
+          "type": "pull_request",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "example-org/web-frontend",
+          "ruleset_id": 102,
+          "parameters": {
+            "required_approving_review_count": 1,
+            "dismiss_stale_reviews_on_push": false,
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_review_thread_resolution": false
+          }
+        }
+      ],
+      "branch": {
+        "name": "main",
+        "commit": {
+          "sha": "0000000000000000000000000000000000000000"
+        },
+        "_links": {
+          "self": "https://api.github.com/repos/example-org/x/branches/main"
+        },
+        "protected": false,
+        "protection": {
+          "enabled": false,
+          "required_status_checks": {
+            "enforcement_level": "off",
+            "contexts": [],
+            "checks": []
+          }
+        },
+        "protection_url": "https://api.github.com/repos/example-org/x/branches/main/protection"
+      },
+      "workflow_permissions": {
+        "default_workflow_permissions": "write",
+        "can_approve_pull_request_reviews": true
+      },
+      "deploy_keys": [
+        {
+          "id": 5002,
+          "url": "https://api.github.com/repos/example-org/web-frontend/keys/5002",
+          "title": "release bot",
+          "verified": true,
+          "created_at": "2026-09-05T10:00:00Z",
+          "read_only": false,
+          "added_by": "example-admin",
+          "last_used": "2026-11-12T22:00:00Z",
+          "enabled": true
+        }
+      ],
+      "secrets": {
+        "total_count": 1,
+        "secrets": [
+          {
+            "name": "NPM_TOKEN",
+            "created_at": "2026-09-05T10:00:00Z",
+            "updated_at": "2026-10-01T10:00:00Z"
+          }
+        ]
+      },
+      "workflows": {
+        "total_count": 1,
+        "workflows": [
+          {
+            "id": 8003,
+            "node_id": "W_example8003",
+            "name": "build",
+            "path": ".github/workflows/build.yml",
+            "state": "active",
+            "created_at": "2026-09-03T10:00:00Z",
+            "updated_at": "2026-10-03T10:00:00Z",
+            "url": "https://api.github.com/repos/example-org/web-frontend/actions/workflows/8003",
+            "html_url": "https://github.com/example-org/web-frontend/blob/main/.github/workflows/build.yml",
+            "badge_url": "https://github.com/example-org/web-frontend/workflows/build/badge.svg"
+          }
+        ]
+      }
+    },
+    {
+      "repository": {
+        "id": 7003,
+        "node_id": "R_example7003",
+        "name": "docs-site",
+        "full_name": "example-org/docs-site",
+        "private": false,
+        "owner": {
+          "login": "example-org",
+          "id": 9001,
+          "type": "Organization"
+        },
+        "html_url": "https://github.com/example-org/docs-site",
+        "description": "Documentation site",
+        "fork": false,
+        "url": "https://api.github.com/repos/example-org/docs-site",
+        "archived": false,
+        "disabled": false,
+        "visibility": "public",
+        "default_branch": "main",
+        "created_at": "2026-09-01T12:00:00Z",
+        "updated_at": "2026-11-10T08:00:00Z",
+        "pushed_at": "2026-11-13T17:30:00Z"
+      },
+      "rulesets": [
+        {
+          "id": 7,
+          "name": "org baseline",
+          "target": "branch",
+          "source_type": "Organization",
+          "source": "example-org",
+          "enforcement": "active",
+          "node_id": "RRS_example7",
+          "_links": {
+            "self": {
+              "href": "https://api.github.com/repos/example-org/rulesets/7"
+            }
+          },
+          "created_at": "2026-09-02T09:00:00Z",
+          "updated_at": "2026-10-20T09:00:00Z"
+        }
+      ],
+      "branch_rules": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Organization",
+          "ruleset_source": "example-org",
+          "ruleset_id": 7
+        }
+      ],
+      "branch": {
+        "name": "main",
+        "commit": {
+          "sha": "0000000000000000000000000000000000000000"
+        },
+        "_links": {
+          "self": "https://api.github.com/repos/example-org/x/branches/main"
+        },
+        "protected": true,
+        "protection": {
+          "enabled": true,
+          "required_status_checks": {
+            "enforcement_level": "everyone",
+            "contexts": [
+              "build"
+            ],
+            "checks": [
+              {
+                "context": "build",
+                "app_id": null
+              }
+            ]
+          }
+        },
+        "protection_url": "https://api.github.com/repos/example-org/x/branches/main/protection"
+      },
+      "workflow_permissions": {
+        "default_workflow_permissions": "read",
+        "can_approve_pull_request_reviews": false
+      },
+      "deploy_keys": {
+        "Error": {
+          "Code": "HTTP 403",
+          "Message": "gh: Resource not accessible by integration (HTTP 403)"
+        }
+      },
+      "secrets": {
+        "total_count": 0,
+        "secrets": []
+      },
+      "workflows": {
+        "total_count": 1,
+        "workflows": [
+          {
+            "id": 8004,
+            "node_id": "W_example8004",
+            "name": "publish",
+            "path": ".github/workflows/publish.yml",
+            "state": "active",
+            "created_at": "2026-09-03T10:00:00Z",
+            "updated_at": "2026-10-03T10:00:00Z",
+            "url": "https://api.github.com/repos/example-org/docs-site/actions/workflows/8004",
+            "html_url": "https://github.com/example-org/docs-site/blob/main/.github/workflows/publish.yml",
+            "badge_url": "https://github.com/example-org/docs-site/workflows/publish/badge.svg"
+          }
+        ]
+      }
+    }
+  ]
+}
