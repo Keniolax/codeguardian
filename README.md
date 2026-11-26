@@ -613,6 +613,17 @@ Measured on 2026-11-26 at commit `6dd2887` on the `v2/github` branch, in a cloud
   in the build, keeps the last answer about the default branch's checks only for that branch:
   after a rename, a check that cannot be read is "not evaluated".
 
+Measured on 2026-11-26 after the review, at commit `2ea322f` on the `v2/github` branch, in the
+same kind of container:
+
+- 461 tests pass (107 for v1, 354 for v2, of which 56 are for GitHub). The mutation run
+  removes 488 controls one at a time: 701 mutant-test pairs, all caught.
+- The review wrote 22 mutations of the slice's code by hand and ran the whole suite on each.
+  Before the review, 20 of them left every test green. One showed a fault: a repository whose
+  list entry had no `private` flag was deleted when a listing that can leave out private
+  repositories left it out. Seventeen were controls with no test; each now has a test and a
+  mutant. Two change nothing that a test can see.
+
 Measured on 2026-11-18 at commit `e357784` on the `v2/netpol-shadow` branch, which also
 holds slices 1 and 2, except the M1 speed, which was measured at `dd2dff1`:
 
