@@ -721,6 +721,11 @@ def test_failed_account_or_repository_list_stops_the_export_and_writes_nothing(t
                                                                                  capsys):
     plan = gh_plan(fx())
     plan[f"gh api {call}"] = answer
+    # Answers for the calls an export that read such an account would make next, so only the
+    # check on the account answer can stop it.
+    plan.update({f"gh api orgs/other-org/repos?type=all&{PAGE}": {"stdout": "[]"},
+                 "gh api user": {"stdout": '{"login": "example-org"}'},
+                 f"gh api user/repos?affiliation=owner&{PAGE}": {"stdout": "[]"}})
     fake_gh(plan)
     out = tmp_path / "out"
     assert run_export(out) == 2
