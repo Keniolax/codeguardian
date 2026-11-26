@@ -130,6 +130,10 @@ def load(path):
     need(isinstance(acct, dict) and _str(acct.get("login")) and acct.get("type") in ACCOUNT_TYPES, "github",
          "the account needs a login and a type of User or Organization")
     need(data.get("listing") in LISTINGS, "github", f"listing must be one of {sorted(LISTINGS)}")
+    # Only a user's own token lists its private repositories; an organisation's are listed as
+    # far as the token can see them.
+    need((data["listing"] == "organization") == (acct["type"] == "Organization"), "github",
+         f"a listing of {data['listing']!r} does not fit an account of type {acct['type']!r}")
     need(isinstance(data.get("repositories"), list), "github", "repositories must be a list")
     names = set()
     for entry in data["repositories"]:
