@@ -552,7 +552,14 @@ snapshot of another account replaces it.
 - Only an account's own token lists its private repositories. With another token the export
   lists the public ones, and the source line says so. For an organisation the source line says
   that private repositories the token cannot see are not listed. A private repository that
-  such a listing leaves out stays in the model, unconfirmed.
+  such a listing leaves out stays in the model, unconfirmed. So does a repository whose list
+  entry does not say whether it is private.
+- The model takes the owner's own listing as the whole list, and deletes a repository it leaves
+  out. But the owner's token may not see every private repository. GitHub's documentation says
+  that a classic token without the `repo` scope sees only public repositories, and that a
+  fine-grained token can be limited to some repositories. With such a token, the model deletes
+  the private repositories that the token cannot see, and their findings read as resolved. The
+  fix waits for a design choice.
 - Secrets are names only; the API returns no value. The export does not keep the public key
   text of a deploy key.
 - `contains` now also joins an account to a repository and a repository to a workflow. An

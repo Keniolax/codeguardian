@@ -112,6 +112,41 @@ def test_classic_protection_requires_a_check_only_when_enforced_and_named(tmp_pa
     assert store.entity(DOCS)["attrs"]["default_branch_checks"] == ("none" if fires else "required")
 
 
+def test_enabled_classic_protection_without_status_checks_requires_none(tmp_path):
+    store, _ = built(tmp_path, lambda d: entry(d, "docs-site")["branch"]["protection"].pop("required_status_checks"))
+    assert store.entity(DOCS)["attrs"]["protection_checks"] == []
+    assert DOCS in opened(store, "POST-GH-001")
+    # Control: with its status checks, the same protection requires "build".
+    store, _ = built(tmp_path)
+    assert DOCS not in opened(store, "POST-GH-001")
+
+
+def test_classic_protection_that_is_not_enabled_requires_no_check(tmp_path):
+    # docs-site's protection still names an enforced check, but the summary says it is off.
+    store, _ = built(tmp_path, lambda d: entry(d, "docs-site")["branch"]["protection"].update(enabled=False))
+    assert store.entity(DOCS)["attrs"]["protection_checks"] == []
+    assert DOCS in opened(store, "POST-GH-001")
+    # Control: enabled, the same protection requires the check.
+    store, _ = built(tmp_path)
+    assert DOCS not in opened(store, "POST-GH-001")
+
+
+def test_a_check_that_one_source_requires_holds_when_the_other_could_not_be_read(tmp_path):
+    def edit(data):
+        entry(data, "payments-api")["branch"] = error()
+        entry(data, "docs-site")["branch_rules"] = error()
+        entry(data, "web-frontend")["branch"] = error()
+
+    store, _ = built(tmp_path, edit)
+    # payments-api's ruleset and docs-site's classic protection each require a check.
+    for repo in (PAY, DOCS):
+        assert store.entity(repo)["attrs"]["default_branch_checks"] == "required", repo
+        assert repo not in opened(store, "POST-GH-001") and repo in opened(store, "POST-GH-005"), repo
+    # Control: web-frontend's ruleset requires none, so with its protection not read it is not known.
+    assert store.entity(WEB)["attrs"]["default_branch_checks"] == "not evaluated"
+    assert WEB not in opened(store, "POST-GH-001")
+
+
 @pytest.mark.parametrize("case", ["unknown-level", "rule-without-parameters", "protection-missing"])
 def test_a_check_setting_the_collector_does_not_read_is_not_evaluated_not_none(tmp_path, case):
     def edit(data):
@@ -244,6 +279,19 @@ def test_part_that_could_not_be_read_keeps_what_the_model_last_read(tmp_path, pa
     assert not KEPT[part](store)
 
 
+def test_part_that_could_not_be_read_keeps_only_its_own_kind_of_child(tmp_path):
+    store, pipe = built(tmp_path)
+    data = fx()
+    web = entry(data, "web-frontend")
+    web["secrets"], web["deploy_keys"] = error(), []
+    snap(tmp_path, pipe, data, at=LATER)
+    # The secrets could not be read, so NPM_TOKEN stays. The keys were read, and the write
+    # key is no longer among them, though it hangs off the repository by the same edge type.
+    assert store.entity(f"github:actions_secret:{ORG}/web-frontend/NPM_TOKEN") is not None
+    assert store.entity(WRITE_KEY) is None
+    assert opened(store, "POST-GH-002") == []
+
+
 @pytest.mark.parametrize("part", ["branch_rules", "branch"])
 def test_check_setting_that_could_not_be_read_keeps_the_last_answer(tmp_path, part):
     repo, attr = (PAY, "ruleset_checks") if part == "branch_rules" else (DOCS, "protection_checks")
@@ -303,6 +351,36 @@ def test_private_repository_a_public_listing_leaves_out_is_kept_not_deleted(tmp_
     assert store.entity(PAY) is None and store.entity(READ_KEY) is None
 
 
+def _without(data, *names):
+    data["repositories"] = [e for e in data["repositories"] if e["repository"]["full_name"].split("/")[1] not in names]
+
+
+def test_public_repository_a_listing_leaves_out_is_gone(tmp_path):
+    store, pipe = built(tmp_path)
+    data = fx()
+    _without(data, "web-frontend", "payments-api")
+    snap(tmp_path, pipe, data, at=LATER)
+    # Every listing shows a public repository, so web-frontend left out is gone, and its key.
+    assert store.entity(WEB) is None and opened(store, "POST-GH-002") == []
+    # Control: the private payments-api, left out of the same listing, stays.
+    assert store.entity(PAY) is not None
+
+
+def test_repository_whose_privacy_is_not_known_is_kept_when_a_listing_leaves_it_out(tmp_path):
+    store, pipe = built(tmp_path, lambda d: entry(d, "web-frontend")["repository"].pop("private"))
+    assert store.entity(WEB)["attrs"]["private"] is None
+    data = fx()
+    _without(data, "web-frontend")
+    snap(tmp_path, pipe, data, at=LATER)
+    # The list did not say whether web-frontend is public, so leaving it out does not show it is gone.
+    assert store.entity(WEB) is not None and opened(store, "POST-GH-002") == [WRITE_KEY]
+    # Control: once the list says it is public, the same listing without it means it is gone.
+    snap(tmp_path, pipe, fx(), at="2026-11-14T10:05:00Z")
+    assert store.entity(WEB)["attrs"]["private"] is False
+    snap(tmp_path, pipe, data, at="2026-11-14T10:10:00Z")
+    assert store.entity(WEB) is None
+
+
 def test_github_source_line_names_what_the_export_does_not_read(tmp_path):
     store, _ = built(tmp_path)
     line = next(x for x in render.sources(store, NOW) if "github.state" in x)
@@ -332,6 +410,18 @@ def _bad_exports():
         "read-only-not-a-flag": edit(lambda d: entry(d, "web-frontend")["deploy_keys"][0].update(read_only="false")),
         "ruleset-twice": edit(lambda d: entry(d, "payments-api")["rulesets"].append(
             copy.deepcopy(entry(d, "payments-api")["rulesets"][0]))),
+        # GitHub names are not case-sensitive: these are one repository.
+        "repository-twice-in-another-case": edit(lambda d: d["repositories"].append(
+            {**copy.deepcopy(d["repositories"][0]), "repository": {**d["repositories"][0]["repository"],
+                                                                   "full_name": f"{ORG}/Payments-API"}})),
+        # Pages that overlapped: total_count holds, but SENTRY_DSN or ci.yml is not in the list.
+        "secret-twice": edit(lambda d: entry(d, "payments-api")["secrets"].update(
+            secrets=[entry(d, "payments-api")["secrets"]["secrets"][0]] * 2)),
+        "workflow-twice": edit(lambda d: entry(d, "payments-api")["workflows"].update(
+            workflows=[entry(d, "payments-api")["workflows"]["workflows"][1]] * 2)),
+        "deploy-key-twice": edit(lambda d: entry(d, "web-frontend")["deploy_keys"].append(
+            copy.deepcopy(entry(d, "web-frontend")["deploy_keys"][0]))),
+        "default-branch-not-a-string": edit(lambda d: entry(d, "docs-site")["repository"].update(default_branch=7)),
     }
 
 
@@ -419,6 +509,15 @@ def test_github_that_never_ran_shows_and_a_walk_elsewhere_does_not_rest_on_it(tm
     assert step_sources({"edge": "contains", "dir": "out", "to": "repository"}) == ("github.state",)
     assert sources({"find": "github_account", "where": [], "limit": 1,
                     "related": [{"edge": "contains", "dir": "out"}]}) == ["github.state"]
+
+
+def test_a_detection_step_rests_on_the_collector_of_the_pair_it_walks_either_way():
+    # No shipped rule walks contains inward, so the loader's rules cannot show this.
+    assert step_sources({"edge": "contains", "dir": "in", "to": "pod"}) == ("ai.inventory",)
+    assert step_sources({"edge": "contains", "dir": "in", "to": "github_account"}) == ("github.state",)
+    assert step_sources({"edge": "contains", "dir": "in", "to": "repository"}) == ("github.state",)
+    # Control: a step with no to type may take any pair, so it rests on both collectors.
+    assert step_sources({"edge": "contains", "dir": "in"}) == ("ai.inventory", "github.state")
 
 
 def test_edges_of_the_github_model_join_their_declared_pairs_and_each_pair_occurs(tmp_path):
@@ -570,6 +669,30 @@ def test_github_manifest_without_an_owner_or_a_readable_not_evaluated_map_is_ref
     assert cli(["ingest", "--db", db, "--now", NOW, "--github-export", str(out)]) == 0
 
 
+def test_not_evaluated_lines_of_a_github_manifest_cannot_forge_a_line(tmp_path, fake_gh, capsys):
+    fake_gh(gh_plan(fx()))
+    out = tmp_path / "out"
+    assert run_export(out) == 0
+    manifest = out / "github-manifest.json"
+    m = json.loads(manifest.read_text())
+    # The manifest is outside the hash it holds, so its text is input like any other.
+    m["not_evaluated"] = {f"{ORG}/docs-site": {HOSTILE: HOSTILE}}
+    manifest.write_text(json.dumps(m))
+    db = str(tmp_path / "m.db")
+    capsys.readouterr()
+    assert cli(["ingest", "--db", db, "--now", NOW, "--github-export", str(out)]) == 0
+    text = capsys.readouterr().out
+    # term() shows each control character as an escape; no line is forged.
+    assert not any(c in text for c in "\x1b\x9b") and "\\x1b[2J\\x9b31m" in text
+    assert not any(x.startswith("- [resolved]") for x in text.splitlines())
+    assert len([x for x in text.splitlines() if "forged" in x]) == 1
+    # Control: the manifest as written gives the plain line.
+    m["not_evaluated"] = {f"{ORG}/docs-site": {"deploy_keys": "HTTP 403"}}
+    manifest.write_text(json.dumps(m))
+    assert cli(["ingest", "--db", str(tmp_path / "n.db"), "--now", NOW, "--github-export", str(out)]) == 0
+    assert f"repository {ORG}/docs-site: deploy_keys not read (HTTP 403); shown as not evaluated" in capsys.readouterr().out
+
+
 def test_user_account_lists_private_repositories_only_with_its_own_token(tmp_path, fake_gh):
     data = fx()
     _as_user(data, "owner")
@@ -591,7 +714,9 @@ def test_user_account_lists_private_repositories_only_with_its_own_token(tmp_pat
     (f"orgs/example-org/repos?type=all&{PAGE}", {"code": 1, "stderr": "gh: Forbidden (HTTP 403)\n"}),
     (f"orgs/example-org/repos?type=all&{PAGE}", {"stdout": '[{"full_name": "example-org/pay'}),
     (f"orgs/example-org/repos?type=all&{PAGE}", {"stdout": '[{"full_name": "other-org/x", "name": "x"}]'}),
-], ids=["account-404", "list-403", "list-truncated", "list-other-owner"])
+    ("users/example-org", {"stdout": '{"login": "other-org", "type": "Organization", "public_repos": 2}'}),
+    ("users/example-org", {"stdout": '{"login": "example-org", "type": "Bot", "public_repos": 2}'}),
+], ids=["account-404", "list-403", "list-truncated", "list-other-owner", "account-other-login", "account-other-type"])
 def test_failed_account_or_repository_list_stops_the_export_and_writes_nothing(tmp_path, fake_gh, call, answer,
                                                                                  capsys):
     plan = gh_plan(fx())
@@ -632,6 +757,52 @@ def test_failed_call_on_one_repository_is_not_evaluated_and_the_export_goes_on(t
     assert len(notes(store, "POST-GH-005", PAY)) == 5 and WEB in opened(store, "POST-GH-005")
     # Control: payments-api's other parts were read.
     assert store.entity(PAY)["attrs"]["default_branch_checks"] == "required"
+
+
+def test_export_reads_every_page_of_a_list(tmp_path, fake_gh):
+    data = fx()
+    plan = gh_plan(data)
+    page2 = "per_page=100&page=2"
+    # The repository list: 100 on the first page, one more on the second.
+    repos = [e["repository"] for e in data["repositories"]]
+    extra = [{**repos[1], "id": 9300 + n, "name": f"r{n}", "full_name": f"{ORG}/r{n}"} for n in range(98)]
+    plan[f"gh api orgs/{ORG}/repos?type=all&{PAGE}"] = {"stdout": json.dumps(repos + extra[:97])}
+    plan[f"gh api orgs/{ORG}/repos?type=all&{page2}"] = {"stdout": json.dumps(extra[97:])}
+    # A list without a count (deploy keys) and one with a total_count (secrets), each on two pages.
+    base = f"gh api repos/{ORG}/web-frontend/"
+    keys = [{"id": 6000 + n, "title": f"k{n}", "read_only": True, "key": "example-public-key-text"} for n in range(101)]
+    plan[base + PATHS["deploy_keys"]] = {"stdout": json.dumps(keys[:100])}
+    plan[base + PATHS["deploy_keys"].replace(PAGE, page2)] = {"stdout": json.dumps(keys[100:])}
+    secrets = [{"name": f"S{n}"} for n in range(101)]
+    plan[base + PATHS["secrets"]] = {"stdout": json.dumps({"total_count": 101, "secrets": secrets[:100]})}
+    plan[base + PATHS["secrets"].replace(PAGE, page2)] = {"stdout": json.dumps({"total_count": 101,
+                                                                                     "secrets": secrets[100:]})}
+    fake_gh(plan)
+    out = tmp_path / "out"
+    assert run_export(out) == 0
+    _only_gets(fake_gh.log())
+    written = json.loads((out / "github.json").read_text())
+    assert len(written["repositories"]) == 101 and written["repositories"][-1]["repository"]["name"] == "r97"
+    web = entry(written, "web-frontend")
+    assert [k["id"] for k in web["deploy_keys"]] == [k["id"] for k in keys]
+    assert web["secrets"] == {"total_count": 101, "secrets": secrets}
+    # Control: a list shorter than one page takes one call.
+    assert ["gh", "api", f"repos/{ORG}/docs-site/actions/secrets?{page2}"] not in fake_gh.log()
+
+
+def test_list_longer_than_its_total_count_is_that_part_not_evaluated(tmp_path, fake_gh):
+    plan = gh_plan(fx())
+    key = f"gh api repos/{ORG}/payments-api/" + PATHS["secrets"]
+    plan[key] = {"stdout": json.dumps({**json.loads(plan[key]["stdout"]), "total_count": 1})}
+    fake_gh(plan)
+    out = tmp_path / "out"
+    assert run_export(out) == 0
+    assert json.loads((out / "github-manifest.json").read_text())["not_evaluated"][f"{ORG}/payments-api"] == {
+        "secrets": "BadOutput"}
+    # The rest of the export is read: one part is not evaluated, the snapshot is not refused.
+    store, pipe = model()
+    pipe.snapshot(github=out / "github.json", at=SNAPSHOT_AT)
+    assert PAY in opened(store, "POST-GH-005") and opened(store, "POST-GH-002") == [WRITE_KEY]
 
 
 HOSTILE_NAMES = ["x -X DELETE", "--method=POST", "{owner}", ":owner", "..", "a\nb", "x?y=1", "keys"]
@@ -693,6 +864,9 @@ def test_run_refuses_a_gh_call_that_is_not_a_listed_get(fake_gh):
         ["gh", "api", f"repos/{ORG}/../user/keys?{PAGE}"],
         ["gh", "api", f"repos/{ORG}/../keys?{PAGE}"],
         ["gh", "api", f"repos/{ORG}/web-frontend/branches/.."],
+        ["gh", "api", f"repos/{ORG}/{{repo}}/keys?{PAGE}"],
+        ["gh", "api", f"repos/{ORG}/:repo/keys?{PAGE}"],
+        ["gh", "api", f"repos/{ORG}/web-frontend/branches/main/protection"],
         ["gh", "api", "user/keys"],
         ["gh", "api", f"repos/{ORG}/web-frontend"],
         ["gh", "api"],

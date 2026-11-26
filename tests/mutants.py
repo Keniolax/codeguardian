@@ -82,6 +82,14 @@ GH_LIST = "test_failed_account_or_repository_list_stops_the_export_and_writes_no
 GH_ONE_REPO = "test_failed_call_on_one_repository_is_not_evaluated_and_the_export_goes_on"
 GH_NO_WRITE = "test_export_runs_no_write_call_under_any_input"
 GH_RUN = "test_run_refuses_a_gh_call_that_is_not_a_listed_get"
+GH_DISABLED = 'test_classic_protection_that_is_not_enabled_requires_no_check'
+GH_ENABLED_NONE = 'test_enabled_classic_protection_without_status_checks_requires_none'
+GH_ONE_SOURCE = 'test_a_check_that_one_source_requires_holds_when_the_other_could_not_be_read'
+GH_OWN_KIND = 'test_part_that_could_not_be_read_keeps_only_its_own_kind_of_child'
+GH_PUBLIC_GONE = 'test_public_repository_a_listing_leaves_out_is_gone'
+GH_PRIVACY = 'test_repository_whose_privacy_is_not_known_is_kept_when_a_listing_leaves_it_out'
+GH_PAGES = 'test_export_reads_every_page_of_a_list'
+GH_MANIFEST_TEXT = 'test_not_evaluated_lines_of_a_github_manifest_cannot_forge_a_line'
 
 
 def T(name, file=CHAIN):
@@ -1551,6 +1559,44 @@ MUTANTS = [
      '_REPO = r"[A-Za-z0-9._-]{1,100}"', [T(GH_RUN, GH)]),
     ("a branch segment may be ..", EXPORT, '_BRANCH = r"(?!\\.\\.?(?:\\?|$))[A-Za-z0-9._~%-]{1,800}"',
      '_BRANCH = r"[A-Za-z0-9._~%-]{1,800}"', [T(GH_RUN, GH)]),
+    ('disabled classic protection read for its checks', GHC, '    if prot.get("enabled") is False:\n        return []\n',
+     '', [T(GH_DISABLED, GH)]),
+    ('enabled protection without status checks not evaluated', GHC, '    if rsc is None:\n        return []\n',
+     '    if rsc is None:\n        return None\n', [T(GH_ENABLED_NONE, GH)]),
+    ('a check one source requires lost when the other is not read', GHC, '    if ruleset or protection:\n        return "required"\n    if ruleset is None or protection is None:\n        return "not evaluated"\n',
+     '    if ruleset is None or protection is None:\n        return "not evaluated"\n    if ruleset or protection:\n        return "required"\n', [T(GH_ONE_SOURCE, GH)]),
+    ('a part not read keeps every child on its edge type', GHC, 'if other is not None and other["type"] == child and other["source"] == SOURCE:',
+     'if other is not None and other["source"] == SOURCE:', [T(GH_OWN_KIND, GH)]),
+    ('a listing keeps a public repository it leaves out', GHC, ' and r["id"] not in listed and r["attrs"].get("private") is not False:',
+     ' and r["id"] not in listed:', [T(GH_PUBLIC_GONE, GH)]),
+    ('a repository of unknown privacy deleted when a listing leaves it out', GHC, ' and r["attrs"].get("private") is not False:',
+     ' and r["attrs"].get("private") is True:', [T(GH_PRIVACY, GH)]),
+    ('unknown privacy read as public', GHC, '"private": repo.get("private") if isinstance(repo.get("private"), bool) else None,',
+     '"private": bool(repo.get("private")),', [T(GH_PRIVACY, GH)]),
+    ('a repository listed twice in another case read twice', GHC, '    need(full.lower() not in names, "github", f"the repository list holds {full!r} twice")\n    names.add(full.lower())',
+     '    need(full not in names, "github", f"the repository list holds {full!r} twice")\n    names.add(full)', [T(GH_REFUSED, GH)]),
+    ('a secret or workflow listed twice read twice', GHC, '            _unique(value[key], field, what)\n',
+     '', [T(GH_REFUSED, GH)]),
+    ('a deploy key listed twice read twice', GHC, '                 "github", f"{what} must be a list of keys with an id, a title and read_only")\n            _unique(value, "id", what)\n',
+     '                 "github", f"{what} must be a list of keys with an id, a title and read_only")\n', [T(GH_REFUSED, GH)]),
+    ('a default branch of any type read', GHC, '    need(repo.get("default_branch") is None or isinstance(repo["default_branch"], str), "github",',
+     '    need(True, "github",', [T(GH_REFUSED, GH)]),
+    ('the export reads only the first page of a list', EXPORT, '        if len(batch) < PER_PAGE or (total is not None and len(items) >= total):',
+     '        if True:', [T(GH_PAGES, GH)]),
+    ('a branch segment may hold a slash', EXPORT, '_BRANCH = r"(?!\\.\\.?(?:\\?|$))[A-Za-z0-9._~%-]{1,800}"',
+     '_BRANCH = r"(?!\\.\\.?(?:\\?|$))[A-Za-z0-9._~%/-]{1,800}"', [T(GH_RUN, GH)]),
+    ('a repository segment may hold a placeholder', EXPORT, '_REPO = r"(?!\\.\\.?/)[A-Za-z0-9._-]{1,100}"',
+     '_REPO = r"(?!\\.\\.?/)[A-Za-z0-9._:{}-]{1,100}"', [T(GH_RUN, GH)]),
+    ('an account answer for another login read', EXPORT, ' or not isinstance(login, str) or login.lower() != owner.lower():',
+     ' or not isinstance(login, str):', [T(f"{GH_LIST}[account-other-login]", GH)]),
+    ('an account answer of any type read', EXPORT, '    if acct.get("type") not in ("User", "Organization") or not isinstance(login, str)',
+     '    if not isinstance(login, str)', [T(f"{GH_LIST}[account-other-type]", GH)]),
+    ("ingest prints a manifest's not-evaluated text raw", CLI, 'print(f"repository {term(repo)}: {term(part)} not read ({term(code)}); shown as not evaluated")',
+     'print(f"repository {term(repo)}: {part} not read ({code}); shown as not evaluated")', [T(GH_MANIFEST_TEXT, GH)]),
+    ("a detection step in reads its pairs at the near end", V2 + "detect.py", '        far = 1 if step["dir"] == "out" else 0\n', '        far = 1\n',
+     [T('test_a_detection_step_rests_on_the_collector_of_the_pair_it_walks_either_way', GH)]),
+    ("a list longer than its total_count passed on", EXPORT, '    if len(items) != total:\n        raise ExportError(f"{what}: listed {len(items)} of {total}")\n',
+     '    if len(items) < total:\n        raise ExportError(f"{what}: listed {len(items)} of {total}")\n', [T('test_list_longer_than_its_total_count_is_that_part_not_evaluated', GH)]),
 ]
 MUTANTS += REVIEWER_MUTANTS
 

@@ -310,10 +310,11 @@ def apply(store, data, at):
                 edge("contains", rid, wid)
     if data["listing"] != "owner":
         # This listing can leave out private repositories, so one the model holds and the
-        # listing does not name is not known to be gone: it stays, unconfirmed.
+        # listing does not name is not known to be gone: it stays, unconfirmed. So does one
+        # whose list entry did not say whether it is private.
         for e in store.edges(aid, "contains"):
             r = store.entity(e["dst"])
-            if r is not None and r["type"] == "repository" and r["id"] not in listed and r["attrs"].get("private") is True:
+            if r is not None and r["type"] == "repository" and r["id"] not in listed and r["attrs"].get("private") is not False:
                 seen_x.add(e["id"])
                 seen_e.add(r["id"])
                 for part in CHILDREN:
