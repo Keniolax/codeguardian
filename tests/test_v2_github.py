@@ -261,6 +261,12 @@ def test_check_setting_that_could_not_be_read_keeps_the_last_answer(tmp_path, pa
     snap(tmp_path, pipe, data)
     assert store.entity(repo)["attrs"]["default_branch_checks"] == "not evaluated"
     assert repo not in opened(store, "POST-GH-001")
+    # Control: the last answer was about another branch, so after a rename it does not hold.
+    store, pipe = built(tmp_path)
+    entry(data, repo.rsplit("/", 1)[1])["repository"]["default_branch"] = "trunk"
+    snap(tmp_path, pipe, data, at=LATER)
+    assert store.entity(repo)["attrs"][attr] is None
+    assert store.entity(repo)["attrs"]["default_branch_checks"] == "not evaluated"
 
 
 def test_repository_without_a_default_branch_is_not_evaluated(tmp_path):

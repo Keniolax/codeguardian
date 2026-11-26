@@ -221,9 +221,11 @@ def _repo_attrs(entry, old):
         notes.append("default branch: not in the repository list, so its rules and protection were not read")
         attrs["ruleset_checks"] = attrs["protection_checks"] = None
     else:
-        attrs["ruleset_checks"] = old.get("ruleset_checks") if _error(entry["branch_rules"]) \
+        # The last answer holds only for the branch it was about.
+        last = old if old.get("default_branch") == branch else {}
+        attrs["ruleset_checks"] = last.get("ruleset_checks") if _error(entry["branch_rules"]) \
             else _checks_from_rules(entry["branch_rules"], notes)
-        attrs["protection_checks"] = old.get("protection_checks") if _error(entry["branch"]) \
+        attrs["protection_checks"] = last.get("protection_checks") if _error(entry["branch"]) \
             else _checks_from_protection(entry["branch"], notes)
     attrs["default_branch_checks"] = _status(attrs["ruleset_checks"], attrs["protection_checks"])
     if _error(entry["workflow_permissions"]):
